@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ESP32 Mini App</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>ESP32 Sensor</h1>
+    <img src="/static/sensor.png" alt="Sensor Icon">
+
+    <p>Check the current status of your ESP32 sensor.</p>
+
+    <button onclick="sendCommand()">Check Status</button>
+  </div>
+
+  <script>
+    function sendCommand() {
+      if (window.Telegram && Telegram.WebApp) {
+        Telegram.WebApp.sendData("check_status");
+      } else {
+        alert("Not running inside Telegram Mini App!");
+      }
+    }
+  </script>
+</body>
+</html>
