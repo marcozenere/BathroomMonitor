@@ -1,16 +1,6 @@
 services:
   - type: web
-    name: bathroom-bot
+    name: esp32-telegram
     env: python
-    plan: free
-    buildCommand: pip install -r WebApp/requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: MQTT_BROKER
-        sync: false
-      - key: MQTT_PORT
-        sync: false
-      - key: DEVICE_ID
-        sync: false
+    buildCommand: "pip install -r WebApp/requirements.txt"
+    startCommand: "uvicorn WebApp.app.main:app --host 0.0.0.0 --port $PORT --workers 2"
