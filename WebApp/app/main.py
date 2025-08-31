@@ -6,11 +6,11 @@ import asyncio
 from collections import deque
 import paho.mqtt.client as mqtt
 from fastapi import FastAPI, Request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # -------------------
 # CONFIG
@@ -31,10 +31,14 @@ WEBHOOK_URL = f"https://<your-render-url>{WEBHOOK_PATH}"
 # -------------------
 app = FastAPI()
 
-# Mount static directory (for CSS, JS, images)
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# Safe static mounting
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-templates = Jinja2Templates(directory="app/templates")
+# Safe templates setup
+templates_dir = os.path.join(os.path.dirname(__file__), "templates")
+templates = Jinja2Templates(directory=templates_dir) if os.path.isdir(templates_dir) else None
 
 # -------------------
 # MQTT SETUP
@@ -72,37 +76,25 @@ mqtt_client.loop_start()
 # -------------------
 bot_app = Application.builder().token(BOT_TOKEN).build()
 
-# -------------------
-# TELEGRAM BOT SETUP
-# -------------------
-bot_app = Application.builder().token(BOT_TOKEN).build()
-
 # ----- COMMAND HANDLERS -----
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Ciao! Usa /checkavailability per controllare lo stato del bagno.")
+    await update.message.reply_text("👋 Ciao! Usa il tasto menu per iniziare.")
 
 async def checkavailability(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    print(f"[DEBUG] /checkavailability from chat {chat_id}")
+    print(f"[DEBUG] /status received from chat {chat_id}")
 
     if current_state == "detected":
         await context.bot.send_message(
             chat_id=chat_id,
-            text="⚠️ Bagno occupato!\nSe vuoi ricevere una notifica quando si libera, scrivi /notifyme"
+            text="⚠️ Bagno occupato! Posso inviarti una notifica nel momento in cui si libera. Procedo?"
         )
+        if chat_id not in subscribers:
+            subscribers.append(chat_id)
     elif current_state == "clear":
         await context.bot.send_message(chat_id=chat_id, text="✅ Bagno libero! Corri.")
     else:
-        await context.bot.send_message(chat_id=chat_id, text="❓ Errore nella lettura del sensore.")
-
-async def notifyme_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User explicitly subscribes for notification"""
-    chat_id = update.effective_chat.id
-    if chat_id not in subscribers:
-        subscribers.append(chat_id)
-        await update.message.reply_text("📌 Perfetto! Ti notificherò non appena il bagno sarà libero.")
-    else:
-        await update.message.reply_text("ℹ️ Sei già in lista per ricevere la notifica.")
+        await context.bot.send_message(chat_id=chat_id, text="❓ Errore nella lettura del sensore! Contatta l'amministratore nel caso l'errore persistesse.")
 
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -112,15 +104,8 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("ℹ️ Non eri iscritto alle notifiche.")
 
-# -------------------
-# NOTIFICATION LOGIC
-# -------------------
-async def notify_subscribers(state: str):
-    """Called when MQTT publishes a new state"""
-    if state != "clear":
-        return  # only notify when it becomes clear
-
-    message = "✅ Bagno libero! Corri 🚀"
+async def notifyme(state: str):
+    message = "✅ Bagno libero! Corri. " if state == "clear" else "⚠️ Bagno occupato! Ti avviserò quando sarà libero."
     while subscribers:
         chat_id = subscribers.popleft()
         try:
@@ -131,7 +116,7 @@ async def notify_subscribers(state: str):
 # Add command handlers
 bot_app.add_handler(CommandHandler("start", start))
 bot_app.add_handler(CommandHandler("checkavailability", checkavailability))
-bot_app.add_handler(CommandHandler("notifyme", notifyme_command))
+bot_app.add_handler(CommandHandler("notifyme", notifyme))
 bot_app.add_handler(CommandHandler("unsubscribe", unsubscribe))
 
 # -------------------
