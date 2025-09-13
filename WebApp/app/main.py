@@ -322,6 +322,7 @@ async def root():
             .action-button svg { margin-right: 0.5rem; }
             .hidden { display: none; }
             #loading-view { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; }
+            #error-view { color: #ef4444; background-color: #ffebee; padding: 1rem; border-radius: 0.5rem; text-align: center; }
             .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; }
             @keyframes spin { to { transform: rotate(360deg); } }
         </style>
@@ -353,19 +354,25 @@ async def root():
         </div>
 
         <div id="error-view" class="hidden">
-            <h1>Oops!</h1>
-            <p>Questa web app può essere utilizzata solo all'interno di Telegram.</p>
+            <h3>Si è verificato un errore</h3>
+            <p id="error-message" style="margin-top: 0.5rem; font-family: monospace; font-size: 0.8rem;"></p>
         </div>
 
         <script>
+            // --- NEW: Global Error Handler ---
+            window.onerror = function(message, source, lineno, colno, error) {
+                showError('Errore non gestito: ' + message);
+                return true; // Prevents the default browser error handling
+            };
+
             const tg = window.Telegram.WebApp;
-            const userId = tg.initDataUnsafe?.user?.id;
-            const deviceId = "device1"; // Hardcoded for now
+            const deviceId = "device1";
 
             // DOM Elements
             const loadingView = document.getElementById('loading-view');
             const appView = document.getElementById('app-view');
             const errorView = document.getElementById('error-view');
+            const errorMessage = document.getElementById('error-message');
             const statusCard = document.getElementById('status-card');
             const statusIcon = document.getElementById('status-icon');
             const statusText = document.getElementById('status-text');
@@ -379,8 +386,16 @@ async def root():
                 detected: `<svg class="text-red-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14"/><path d="M2 20h20"/><path d="M14 12v.01"/></svg>`,
                 unknown: `<svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`
             };
+            
+            function showError(message) {
+                loadingView.classList.add('hidden');
+                appView.classList.add('hidden');
+                errorView.classList.remove('hidden');
+                errorMessage.textContent = message;
+            }
 
             function updateUI(state, isSubscribed) {
+                errorView.classList.add('hidden');
                 loadingView.classList.add('hidden');
                 appView.classList.remove('hidden');
 
@@ -410,6 +425,12 @@ async def root():
             }
 
             async function fetchStatus(isManualRefresh = false) {
+                const userId = tg.initDataUnsafe?.user?.id;
+                if (!userId) {
+                    showError("Impossibile ottenere l'ID utente da Telegram.");
+                    return;
+                }
+                
                 if(isManualRefresh) {
                     tg.HapticFeedback.impactOccurred('light');
                     statusDescription.textContent = 'Aggiornamento in corso...';
@@ -417,7 +438,9 @@ async def root():
                 }
                 try {
                     const response = await fetch(`/api/status/${deviceId}/${userId}`);
-                    if (!response.ok) throw new Error('Network response was not ok');
+                    if (!response.ok) {
+                        throw new Error(`Errore di rete: ${response.status} ${response.statusText}`);
+                    }
                     const data = await response.json();
                     updateUI(data.status, data.is_subscribed);
                     if(isManualRefresh) {
@@ -425,10 +448,7 @@ async def root():
                     }
                 } catch (error) {
                     console.error('Failed to fetch status:', error);
-                    updateUI('unknown', false);
-                     if(isManualRefresh) {
-                         statusDescription.textContent = "Errore durante l'aggiornamento.";
-                    }
+                    showError(`Fallimento fetch: ${error.message}`);
                 } finally {
                     if(isManualRefresh) {
                         setTimeout(() => { refreshButton.disabled = false; }, 500);
@@ -437,6 +457,7 @@ async def root():
             }
 
             async function handleUserAction(endpoint) {
+                const userId = tg.initDataUnsafe?.user?.id;
                 tg.HapticFeedback.impactOccurred('light');
                 subscribeButton.disabled = true;
                 unsubscribeButton.disabled = true;
@@ -452,6 +473,7 @@ async def root():
                 } catch (error) {
                     tg.HapticFeedback.notificationOccurred('error');
                     console.error(`Failed to ${endpoint}:`, error);
+                    showError(`Azione fallita: ${error.message}`);
                 } finally {
                     subscribeButton.disabled = false;
                     unsubscribeButton.disabled = false;
@@ -459,28 +481,32 @@ async def root():
             }
 
             function initializeApp() {
-                if (!userId) {
-                    loadingView.classList.add('hidden');
-                    errorView.classList.remove('hidden');
-                    return;
+                try {
+                    const userId = tg.initDataUnsafe?.user?.id;
+                    if (!userId) {
+                        showError("I dati utente di Telegram non sono disponibili. Assicurati di avviare l'app da un client Telegram aggiornato.");
+                        return;
+                    }
+
+                    tg.ready();
+                    tg.expand();
+                    
+                    document.documentElement.style.setProperty('--telegram-bg-color', tg.themeParams.bg_color || '#ffffff');
+                    document.documentElement.style.setProperty('--telegram-text-color', tg.themeParams.text_color || '#000000');
+                    document.documentElement.style.setProperty('--telegram-hint-color', tg.themeParams.hint_color || '#999999');
+                    document.documentElement.style.setProperty('--telegram-link-color', tg.themeParams.link_color || '#2481cc');
+                    document.documentElement.style.setProperty('--telegram-button-color', tg.themeParams.button_color || '#2481cc');
+                    document.documentElement.style.setProperty('--telegram-button-text-color', tg.themeParams.button_text_color || '#ffffff');
+                    document.documentElement.style.setProperty('--telegram-secondary-bg-color', tg.themeParams.secondary_bg_color || '#f3f3f3');
+
+                    refreshButton.addEventListener('click', () => fetchStatus(true));
+                    subscribeButton.addEventListener('click', () => handleUserAction('/api/subscribe'));
+                    unsubscribeButton.addEventListener('click', () => handleUserAction('/api/unsubscribe'));
+
+                    fetchStatus();
+                } catch(e) {
+                    showError(`Errore durante l'inizializzazione: ${e.message}`);
                 }
-
-                tg.ready();
-                tg.expand();
-                
-                document.documentElement.style.setProperty('--telegram-bg-color', tg.themeParams.bg_color || '#ffffff');
-                document.documentElement.style.setProperty('--telegram-text-color', tg.themeParams.text_color || '#000000');
-                document.documentElement.style.setProperty('--telegram-hint-color', tg.themeParams.hint_color || '#999999');
-                document.documentElement.style.setProperty('--telegram-link-color', tg.themeParams.link_color || '#2481cc');
-                document.documentElement.style.setProperty('--telegram-button-color', tg.themeParams.button_color || '#2481cc');
-                document.documentElement.style.setProperty('--telegram-button-text-color', tg.themeParams.button_text_color || '#ffffff');
-                document.documentElement.style.setProperty('--telegram-secondary-bg-color', tg.themeParams.secondary_bg_color || '#f3f3f3');
-
-                refreshButton.addEventListener('click', () => fetchStatus(true));
-                subscribeButton.addEventListener('click', () => handleUserAction('/api/subscribe'));
-                unsubscribeButton.addEventListener('click', () => handleUserAction('/api/unsubscribe'));
-
-                fetchStatus();
             }
 
             window.addEventListener('load', initializeApp);
