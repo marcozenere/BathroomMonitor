@@ -1,6 +1,32 @@
 services:
-  - type: web
-    name: esp32-telegram
-    env: python
-    buildCommand: "pip install -r WebApp/requirements.txt"
-    startCommand: "uvicorn WebApp.app.main:app --host 0.0.0.0 --port $PORT --workers 2"
+type: web
+name: esp-telegram
+env: python
+plan: free # Using the free plan as a default
+buildCommand: "pip install -r WebApp/requirements.txt"
+startCommand: "uvicorn WebApp.app.main:app --host 0.0.0.0 --port $PORT"
+healthCheckPath: / # It's good practice to add a health check
+envVars:
+
+key: PYTHON_VERSION
+value: 3.11
+
+key: TELEGRAM_BOT_TOKEN
+sync: false # Set this secret in the Render dashboard
+
+key: MQTT_BROKER
+value: "broker.hivemq.com" # Or your preferred broker
+
+key: DEVICE_ID
+value: "device1" # Or your device ID
+
+fromService:
+type: redis
+name: esp32-redis # Must match the name of the redis service
+envVarKey: REDIS_URL
+
+type: redis
+name: esp32-redis
+plan: free
+maxmemoryPolicy: allkeys-lru # A good default memory policy
+
