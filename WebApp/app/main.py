@@ -33,6 +33,9 @@ try:
 except KeyError as e:
     raise RuntimeError(f"Missing essential environment variable: {e}") from e
 
+# This is a critical debugging step to see which URL is being used.
+logger.info(f"Attempting to connect to Redis at: {REDIS_URL}")
+
 # Render provides this URL automatically.
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
@@ -139,10 +142,25 @@ async def lifespan(app: FastAPI):
 
     # Initialize Redis Client ONCE and store in context
     redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-    await redis_client.ping()
-    app_context['redis_client'] = redis_client
-    logger.info("Redis connection established.")
 
+    # Add a retry mechanism for the initial connection to handle startup delays.
+    connected_to_redis = False
+    for attempt in range(5):  # Try to connect 5 times
+        try:
+            await redis_client.ping()
+            connected_to_redis = True
+            logger.info("Redis connection established.")
+            break
+        except redis.exceptions.ConnectionError:
+            logger.warning(f"Redis connection attempt {attempt + 1} failed. Retrying in 3 seconds...")
+            await asyncio.sleep(3)
+    
+    if not connected_to_redis:
+        logger.error("Could not establish connection to Redis after multiple attempts.")
+        raise RuntimeError("Failed to connect to Redis during startup.")
+
+    app_context['redis_client'] = redis_client
+    
     # Initialize Telegram Bot Application
     bot_app = Application.builder().token(BOT_TOKEN).build()
     app_context['bot_app'] = bot_app
