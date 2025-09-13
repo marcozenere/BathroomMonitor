@@ -9,7 +9,7 @@ import uvicorn
 from aiomqtt import Client as MQTTClient, MqttError
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
-from telegram import Update
+from telegram import Update, MenuButtonWebApp, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # -------------------
@@ -179,8 +179,16 @@ async def lifespan(app: FastAPI):
         await bot_app.bot.delete_webhook()
         await bot_app.bot.set_webhook(url=WEBHOOK_URL)
         logger.info(f"Webhook set to: {WEBHOOK_URL}")
+
+        # Configure the menu button to launch the Mini App
+        menu_button = MenuButtonWebApp(
+            text="Check Status",  # Text that appears on the button
+            web_app=WebAppInfo(url=RENDER_EXTERNAL_URL) # URL of your web app
+        )
+        await bot_app.bot.set_chat_menu_button(menu_button=menu_button)
+        logger.info("Chat menu button set to launch the Mini App.")
     else:
-        logger.warning("RENDER_EXTERNAL_URL not set. Skipping webhook setup. Bot will not work on Render.")
+        logger.warning("RENDER_EXTERNAL_URL not set. Skipping webhook and menu button setup.")
 
 
     # Start the MQTT listener as a background task
@@ -209,7 +217,7 @@ app = FastAPI(lifespan=lifespan)
 # TELEGRAM COMMAND HANDLERS
 # -------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Ciao! Usa /checkavailability per controllare lo stato del bagno.")
+    await update.message.reply_text("👋 Ciao! Clicca il tasto 'Menu' per avviare l'app.")
 
 async def checkavailability_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -262,7 +270,27 @@ async def telegram_webhook(req: Request):
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return "<h1>Telegram Bot is running...</h1>"
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Bot Status</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f2f5; color: #333; }
+            .container { text-align: center; padding: 20px; background-color: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h1 { font-size: 24px; color: #1c1e21; }
+            p { font-size: 16px; color: #606770; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Telegram Bot is Running</h1>
+            <p>The backend service is active and ready to receive updates.</p>
+        </div>
+    </body>
+    </html>
+    """
 
 
 # -------------------
