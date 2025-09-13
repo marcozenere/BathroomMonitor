@@ -99,7 +99,7 @@ async def mqtt_listener():
                 await client.subscribe(MQTT_BASE_TOPIC)
                 async with client.messages() as messages:
                     async for message in messages:
-                        topic_match = topic_regex.match(message.topic.string)
+                        topic_match = topic_regex.match(str(message.topic))
                         if not topic_match:
                             continue
                         
