@@ -139,20 +139,45 @@ async def lifespan(app: FastAPI):
     logger.info("Application starting up...")
     
     redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-    # ... (retry logic for Redis connection) ...
+    
+    connected_to_redis = False
+    for attempt in range(5):
+        try:
+            await redis_client.ping()
+            connected_to_redis = True
+            logger.info("Redis connection established.")
+            break
+        except RedisConnectionError:
+            logger.warning(f"Redis connection attempt {attempt + 1} failed. Retrying in 3 seconds...")
+            await asyncio.sleep(3)
+
+    if not connected_to_redis:
+        logger.error("Could not establish connection to Redis after multiple attempts.")
+        raise RuntimeError("Failed to connect to Redis during startup.")
+
     app_context['redis_client'] = redis_client
     
-    # Set an initial state for the default device if one doesn't exist
     await redis_client.setnx(redis_key_state("device1"), "unknown")
     
     bot_app = Application.builder().token(BOT_TOKEN).updater(None).build()
     app_context['bot_app'] = bot_app
-    # ... (add handlers) ...
+    
+    bot_app.add_handler(CommandHandler("start", start_command))
+    bot_app.add_handler(CommandHandler("checkavailability", checkavailability_command))
+    bot_app.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     
     await bot_app.initialize()
     if WEBHOOK_URL:
-        # ... (webhook and menu button setup) ...
-        logger.info("Webhook and menu button setup complete.")
+        await bot_app.bot.delete_webhook()
+        await bot_app.bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"Webhook set to: {WEBHOOK_URL}")
+
+        menu_button = MenuButtonWebApp(
+            text="Apri App Bagno",
+            web_app=WebAppInfo(url=RENDER_EXTERNAL_URL)
+        )
+        await bot_app.bot.set_chat_menu_button(menu_button=menu_button)
+        logger.info("Chat menu button set to launch the Mini App.")
     else:
         logger.warning("RENDER_EXTERNAL_URL not set. Skipping setup.")
 
@@ -183,37 +208,51 @@ class UserAction(BaseModel):
 # -------------------
 # TELEGRAM COMMAND HANDLERS
 # -------------------
-# (Handlers remain largely the same, but would need logic for multiple devices in the future)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 Ciao! Clicca il tasto 'Menu' per avviare l'app.")
 
 async def checkavailability_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # This command would need updating to ask the user WHICH bathroom they want to check
-    # For now, it defaults to "device1"
     chat_id = update.effective_chat.id
     device_id = "device1"
     redis_client = app_context['redis_client']
     current_state = await redis_client.get(redis_key_state(device_id)) or "unknown"
+
     if current_state == "detected":
         await redis_client.sadd(redis_key_subscribers(device_id), str(chat_id))
         await update.message.reply_text(f"⚠️ Bagno '{device_id}' occupato! Riceverai una notifica.")
-    # ... other states
+    elif current_state == "clear":
+        await update.message.reply_text(f"✅ Bagno '{device_id}' libero! Corri.")
+    else:
+        await update.message.reply_text(f"❓ Stato del bagno '{device_id}' sconosciuto.")
     
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Similarly, this needs to know which subscription to remove
     chat_id = update.effective_chat.id
     device_id = "device1" 
     redis_client = app_context['redis_client']
     removed_count = await redis_client.srem(redis_key_subscribers(device_id), str(chat_id))
-    # ... response logic
+    if removed_count > 0:
+        await update.message.reply_text("🛑 Non riceverai più notifiche.")
+    else:
+        await update.message.reply_text("ℹ️ Non eri iscritto alle notifiche.")
 
 # -------------------
 # WEBHOOK ENDPOINT
 # -------------------
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(req: Request):
-    # ... (webhook processing logic) ...
-    return {"ok": True}
+    try:
+        bot_app = app_context.get('bot_app')
+        if not bot_app:
+            logger.error("Bot application not initialized.")
+            raise HTTPException(status_code=500, detail="Bot not ready")
+
+        data = await req.json()
+        update = Update.de_json(data, bot_app.bot)
+        await bot_app.process_update(update)
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}")
+        return {"ok": False, "error": str(e)}
 
 # -------------------
 # API ENDPOINTS FOR WEB APP
@@ -246,7 +285,6 @@ async def unsubscribe_user(user_action: UserAction):
 # -------------------
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    # Note: The HTML/JS is now much longer and includes the new refresh button logic.
     return """
     <!DOCTYPE html>
     <html lang="it">
@@ -257,7 +295,6 @@ async def root():
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
-            /* Styles remain largely the same, with minor adjustments for new elements */
             :root {
                 --telegram-bg-color: #ffffff;
                 --telegram-text-color: #000000;
@@ -284,47 +321,99 @@ async def root():
             .action-button:disabled { background-color: #d1d5db; cursor: not-allowed; }
             .action-button svg { margin-right: 0.5rem; }
             .hidden { display: none; }
+            #loading-view { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; }
+            .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; }
+            @keyframes spin { to { transform: rotate(360deg); } }
         </style>
     </head>
     <body>
-        <!-- Views for loading, app, and error states -->
-        <div id="loading-view">...</div>
-        <div id="app-view" class="hidden">
-            <div id="status-card">...</div>
+        <div id="loading-view">
+            <div class="spinner"></div>
+            <p style="margin-top: 1rem; color: var(--telegram-hint-color);">Caricamento...</p>
+        </div>
+
+        <div id="app-view" class="hidden w-full max-w-md flex flex-col items-center">
+            <div id="status-card" class="status-card">
+                <div id="status-icon" class="status-icon"></div>
+                <h1 id="status-text" class="status-text"></h1>
+                <p id="status-description" class="status-description"></p>
+            </div>
             <button id="refresh-button" class="action-button refresh-button">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
                 Aggiorna Stato
             </button>
-            <button id="subscribe-button" class="action-button hidden">...</button>
-            <button id="unsubscribe-button" class="action-button hidden">...</button>
+            <button id="subscribe-button" class="action-button hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                Avvisami quando è libero
+            </button>
+            <button id="unsubscribe-button" class="action-button hidden">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 3 9H3a21.3 21.3 0 0 0 3-9A6 6 0 0 1 8.7 3"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></svg>
+                Annulla notifica
+            </button>
         </div>
-        <div id="error-view" class="hidden">...</div>
+
+        <div id="error-view" class="hidden">
+            <h1>Oops!</h1>
+            <p>Questa web app può essere utilizzata solo all'interno di Telegram.</p>
+        </div>
 
         <script>
             const tg = window.Telegram.WebApp;
             const userId = tg.initDataUnsafe?.user?.id;
-            // For now, we hardcode the device we are controlling.
-            // In the future, this could come from a dropdown menu.
-            const deviceId = "device1";
+            const deviceId = "device1"; // Hardcoded for now
 
             // DOM Elements
             const loadingView = document.getElementById('loading-view');
             const appView = document.getElementById('app-view');
+            const errorView = document.getElementById('error-view');
+            const statusCard = document.getElementById('status-card');
+            const statusIcon = document.getElementById('status-icon');
+            const statusText = document.getElementById('status-text');
             const statusDescription = document.getElementById('status-description');
             const refreshButton = document.getElementById('refresh-button');
-            // ... other elements
+            const subscribeButton = document.getElementById('subscribe-button');
+            const unsubscribeButton = document.getElementById('unsubscribe-button');
 
-            const icons = { /* ... icon SVGs ... */ };
+            const icons = {
+                clear: `<svg class="text-green-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M2 20h17"/><path d="M10 12v.01"/></svg>`,
+                detected: `<svg class="text-red-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14"/><path d="M2 20h20"/><path d="M14 12v.01"/></svg>`,
+                unknown: `<svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`
+            };
 
             function updateUI(state, isSubscribed) {
-                // ... logic to update card, text, and icons ...
-                // ... logic to show/hide subscribe/unsubscribe based on state and isSubscribed ...
+                loadingView.classList.add('hidden');
+                appView.classList.remove('hidden');
+
+                statusCard.className = 'status-card ' + state;
+                statusIcon.innerHTML = icons[state] || icons.unknown;
+                statusText.className = 'status-text ' + state;
+
+                subscribeButton.classList.add('hidden');
+                unsubscribeButton.classList.add('hidden');
+
+                if (state === 'clear') {
+                    statusText.textContent = 'Libero';
+                    statusDescription.textContent = 'Il bagno è disponibile. Corri!';
+                } else if (state === 'detected') {
+                    statusText.textContent = 'Occupato';
+                    if (isSubscribed) {
+                        statusDescription.textContent = 'Sei in lista. Riceverai una notifica.';
+                        unsubscribeButton.classList.remove('hidden');
+                    } else {
+                        statusDescription.textContent = 'Qualcuno è dentro. Vuoi essere avvisato?';
+                        subscribeButton.classList.remove('hidden');
+                    }
+                } else {
+                    statusText.textContent = 'Sconosciuto';
+                    statusDescription.textContent = 'Non riesco a determinare lo stato del bagno.';
+                }
             }
 
             async function fetchStatus(isManualRefresh = false) {
                 if(isManualRefresh) {
                     tg.HapticFeedback.impactOccurred('light');
                     statusDescription.textContent = 'Aggiornamento in corso...';
+                    refreshButton.disabled = true;
                 }
                 try {
                     const response = await fetch(`/api/status/${deviceId}/${userId}`);
@@ -332,37 +421,66 @@ async def root():
                     const data = await response.json();
                     updateUI(data.status, data.is_subscribed);
                     if(isManualRefresh) {
-                         statusDescription.textContent = 'Stato aggiornato!';
+                         setTimeout(() => { statusDescription.textContent = 'Stato aggiornato!'; }, 200);
                     }
                 } catch (error) {
                     console.error('Failed to fetch status:', error);
                     updateUI('unknown', false);
                      if(isManualRefresh) {
-                         statusDescription.textContent = 'Errore durante l'aggiornamento.';
+                         statusDescription.textContent = "Errore durante l'aggiornamento.";
+                    }
+                } finally {
+                    if(isManualRefresh) {
+                        setTimeout(() => { refreshButton.disabled = false; }, 500);
                     }
                 }
             }
 
-            async function handleSubscribe() {
-                // ... fetch POST to /api/subscribe with deviceId and userId ...
-            }
-            
-            async function handleUnsubscribe() {
-                // ... fetch POST to /api/unsubscribe with deviceId and userId ...
+            async function handleUserAction(endpoint) {
+                tg.HapticFeedback.impactOccurred('light');
+                subscribeButton.disabled = true;
+                unsubscribeButton.disabled = true;
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: userId, device_id: deviceId })
+                    });
+                    if (!response.ok) throw new Error('Action failed');
+                    tg.HapticFeedback.notificationOccurred('success');
+                    await fetchStatus();
+                } catch (error) {
+                    tg.HapticFeedback.notificationOccurred('error');
+                    console.error(`Failed to ${endpoint}:`, error);
+                } finally {
+                    subscribeButton.disabled = false;
+                    unsubscribeButton.disabled = false;
+                }
             }
 
             function initializeApp() {
-                if (!userId) { /* Show error */ return; }
+                if (!userId) {
+                    loadingView.classList.add('hidden');
+                    errorView.classList.remove('hidden');
+                    return;
+                }
+
                 tg.ready();
                 tg.expand();
                 
-                // Set theme colors from Telegram
-                // ...
-                
-                refreshButton.addEventListener('click', () => fetchStatus(true));
-                // ... subscribe/unsubscribe button listeners ...
+                document.documentElement.style.setProperty('--telegram-bg-color', tg.themeParams.bg_color || '#ffffff');
+                document.documentElement.style.setProperty('--telegram-text-color', tg.themeParams.text_color || '#000000');
+                document.documentElement.style.setProperty('--telegram-hint-color', tg.themeParams.hint_color || '#999999');
+                document.documentElement.style.setProperty('--telegram-link-color', tg.themeParams.link_color || '#2481cc');
+                document.documentElement.style.setProperty('--telegram-button-color', tg.themeParams.button_color || '#2481cc');
+                document.documentElement.style.setProperty('--telegram-button-text-color', tg.themeParams.button_text_color || '#ffffff');
+                document.documentElement.style.setProperty('--telegram-secondary-bg-color', tg.themeParams.secondary_bg_color || '#f3f3f3');
 
-                fetchStatus(); // Initial fetch on load
+                refreshButton.addEventListener('click', () => fetchStatus(true));
+                subscribeButton.addEventListener('click', () => handleUserAction('/api/subscribe'));
+                unsubscribeButton.addEventListener('click', () => handleUserAction('/api/unsubscribe'));
+
+                fetchStatus();
             }
 
             window.addEventListener('load', initializeApp);
@@ -371,7 +489,6 @@ async def root():
     </html>
     """
 
-# (Simplified Python logic for brevity in this response)
 if __name__ == "__main__":
     logger.info("Starting server for local development...")
     uvicorn.run(app, host="0.0.0.0", port=8000)
