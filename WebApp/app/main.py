@@ -340,7 +340,7 @@ async def root():
                 <p id="status-description" class="status-description"></p>
             </div>
             <button id="refresh-button" class="action-button refresh-button">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
                 Aggiorna Stato
             </button>
             <button id="subscribe-button" class="action-button hidden">
@@ -359,13 +359,11 @@ async def root():
         </div>
 
         <script>
-            // --- NEW: Global Error Handler ---
             window.onerror = function(message, source, lineno, colno, error) {
                 showError('Errore non gestito: ' + message);
-                return true; // Prevents the default browser error handling
+                return true;
             };
 
-            const tg = window.Telegram.WebApp;
             const deviceId = "device1";
 
             // DOM Elements
@@ -425,10 +423,10 @@ async def root():
             }
 
             async function fetchStatus(isManualRefresh = false) {
+                const tg = window.Telegram.WebApp;
                 const userId = tg.initDataUnsafe?.user?.id;
                 if (!userId) {
-                    showError("Impossibile ottenere l'ID utente da Telegram.");
-                    return;
+                    throw new Error("Impossibile ottenere l'ID utente da Telegram.");
                 }
                 
                 if(isManualRefresh) {
@@ -436,27 +434,24 @@ async def root():
                     statusDescription.textContent = 'Aggiornamento in corso...';
                     refreshButton.disabled = true;
                 }
-                try {
-                    const response = await fetch(`/api/status/${deviceId}/${userId}`);
-                    if (!response.ok) {
-                        throw new Error(`Errore di rete: ${response.status} ${response.statusText}`);
-                    }
-                    const data = await response.json();
-                    updateUI(data.status, data.is_subscribed);
-                    if(isManualRefresh) {
-                         setTimeout(() => { statusDescription.textContent = 'Stato aggiornato!'; }, 200);
-                    }
-                } catch (error) {
-                    console.error('Failed to fetch status:', error);
-                    showError(`Fallimento fetch: ${error.message}`);
-                } finally {
-                    if(isManualRefresh) {
-                        setTimeout(() => { refreshButton.disabled = false; }, 500);
-                    }
+                
+                const response = await fetch(`/api/status/${deviceId}/${userId}`);
+                if (!response.ok) {
+                    throw new Error(`Errore di rete: ${response.status} ${response.statusText}`);
+                }
+                const data = await response.json();
+                updateUI(data.status, data.is_subscribed);
+                
+                if(isManualRefresh) {
+                    setTimeout(() => { 
+                        statusDescription.textContent = 'Stato aggiornato!'; 
+                        refreshButton.disabled = false;
+                    }, 500);
                 }
             }
 
             async function handleUserAction(endpoint) {
+                const tg = window.Telegram.WebApp;
                 const userId = tg.initDataUnsafe?.user?.id;
                 tg.HapticFeedback.impactOccurred('light');
                 subscribeButton.disabled = true;
@@ -467,13 +462,13 @@ async def root():
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ user_id: userId, device_id: deviceId })
                     });
-                    if (!response.ok) throw new Error('Action failed');
+                    if (!response.ok) throw new Error('Azione fallita');
                     tg.HapticFeedback.notificationOccurred('success');
                     await fetchStatus();
                 } catch (error) {
                     tg.HapticFeedback.notificationOccurred('error');
                     console.error(`Failed to ${endpoint}:`, error);
-                    showError(`Azione fallita: ${error.message}`);
+                    throw error; // Re-throw to be caught by the caller
                 } finally {
                     subscribeButton.disabled = false;
                     unsubscribeButton.disabled = false;
@@ -482,6 +477,12 @@ async def root():
 
             function initializeApp() {
                 try {
+                    if (!window.Telegram || !window.Telegram.WebApp) {
+                        showError("L'oggetto Telegram WebApp non è disponibile.");
+                        return;
+                    }
+                    const tg = window.Telegram.WebApp;
+
                     const userId = tg.initDataUnsafe?.user?.id;
                     if (!userId) {
                         showError("I dati utente di Telegram non sono disponibili. Assicurati di avviare l'app da un client Telegram aggiornato.");
@@ -499,11 +500,18 @@ async def root():
                     document.documentElement.style.setProperty('--telegram-button-text-color', tg.themeParams.button_text_color || '#ffffff');
                     document.documentElement.style.setProperty('--telegram-secondary-bg-color', tg.themeParams.secondary_bg_color || '#f3f3f3');
 
-                    refreshButton.addEventListener('click', () => fetchStatus(true));
-                    subscribeButton.addEventListener('click', () => handleUserAction('/api/subscribe'));
-                    unsubscribeButton.addEventListener('click', () => handleUserAction('/api/unsubscribe'));
+                    refreshButton.addEventListener('click', () => {
+                        fetchStatus(true).catch(err => showError(`Fallimento aggiornamento: ${err.message}`));
+                    });
+                    subscribeButton.addEventListener('click', () => {
+                        handleUserAction('/api/subscribe').catch(err => showError(`Fallimento iscrizione: ${err.message}`));
+                    });
+                    unsubscribeButton.addEventListener('click', () => {
+                        handleUserAction('/api/unsubscribe').catch(err => showError(`Fallimento cancellazione: ${err.message}`));
+                    });
 
-                    fetchStatus();
+                    fetchStatus().catch(err => showError(`Fallimento caricamento iniziale: ${err.message}`));
+                
                 } catch(e) {
                     showError(`Errore durante l'inizializzazione: ${e.message}`);
                 }
