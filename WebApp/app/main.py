@@ -9,7 +9,7 @@ import uvicorn
 from aiomqtt import Client as MQTTClient, MqttError
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # -------------------
@@ -162,9 +162,9 @@ async def lifespan(app: FastAPI):
 
     app_context['redis_client'] = redis_client
 
-    # Initialize Telegram Bot Application directly to avoid Updater issues
-    bot = Bot(token=BOT_TOKEN)
-    bot_app = Application(bot=bot)
+    # Revert to the standard Application.builder() method.
+    # This is the correct way to initialize the bot and avoids the TypeError.
+    bot_app = Application.builder().token(BOT_TOKEN).build()
     app_context['bot_app'] = bot_app
 
     bot_app.add_handler(CommandHandler("start", start_command))
