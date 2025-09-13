@@ -325,6 +325,7 @@ async def root():
             #error-view { color: #ef4444; background-color: #ffebee; padding: 1rem; border-radius: 0.5rem; text-align: center; }
             .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; }
             @keyframes spin { to { transform: rotate(360deg); } }
+            #debug-log { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; font-family: monospace; font-size: 10px; max-height: 100px; overflow-y: scroll; padding: 5px; z-index: 9999; }
         </style>
     </head>
     <body>
@@ -344,11 +345,11 @@ async def root():
                 Aggiorna Stato
             </button>
             <button id="subscribe-button" class="action-button hidden">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
                 Avvisami quando è libero
             </button>
             <button id="unsubscribe-button" class="action-button hidden">
-                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 3 9H3a21.3 21.3 0 0 0 3-9A6 6 0 0 1 8.7 3"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></svg>
+                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 3 9H3a21.3 21.3 0 0 0 3-9A6 6 0 0 1 8.7 3"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></svg>
                 Annulla notifica
             </button>
         </div>
@@ -357,9 +358,21 @@ async def root():
             <h3>Si è verificato un errore</h3>
             <p id="error-message" style="margin-top: 0.5rem; font-family: monospace; font-size: 0.8rem;"></p>
         </div>
+        
+        <div id="debug-log"></div>
 
         <script>
+            const debugLog = document.getElementById('debug-log');
+            function logDebug(message) {
+                console.log(message);
+                const p = document.createElement('p');
+                p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+                debugLog.appendChild(p);
+                debugLog.scrollTop = debugLog.scrollHeight;
+            }
+
             window.onerror = function(message, source, lineno, colno, error) {
+                logDebug(`ERRORE GLOBALE: ${message}`);
                 showError('Errore non gestito: ' + message);
                 return true;
             };
@@ -393,6 +406,7 @@ async def root():
             }
 
             function updateUI(state, isSubscribed) {
+                logDebug(`Aggiornamento UI: stato=${state}, iscritto=${isSubscribed}`);
                 errorView.classList.add('hidden');
                 loadingView.classList.add('hidden');
                 appView.classList.remove('hidden');
@@ -423,10 +437,11 @@ async def root():
             }
 
             async function fetchStatus(isManualRefresh = false) {
+                logDebug("Esecuzione fetchStatus...");
                 const tg = window.Telegram.WebApp;
                 const userId = tg.initDataUnsafe?.user?.id;
                 if (!userId) {
-                    throw new Error("Impossibile ottenere l'ID utente da Telegram.");
+                    throw new Error("ID utente non trovato in initDataUnsafe.");
                 }
                 
                 if(isManualRefresh) {
@@ -435,11 +450,13 @@ async def root():
                     refreshButton.disabled = true;
                 }
                 
+                logDebug(`Chiamata API a /api/status/${deviceId}/${userId}`);
                 const response = await fetch(`/api/status/${deviceId}/${userId}`);
                 if (!response.ok) {
                     throw new Error(`Errore di rete: ${response.status} ${response.statusText}`);
                 }
                 const data = await response.json();
+                logDebug(`Dati ricevuti: ${JSON.stringify(data)}`);
                 updateUI(data.status, data.is_subscribed);
                 
                 if(isManualRefresh) {
@@ -451,6 +468,7 @@ async def root():
             }
 
             async function handleUserAction(endpoint) {
+                logDebug(`Esecuzione handleUserAction per ${endpoint}`);
                 const tg = window.Telegram.WebApp;
                 const userId = tg.initDataUnsafe?.user?.id;
                 tg.HapticFeedback.impactOccurred('light');
@@ -467,8 +485,8 @@ async def root():
                     await fetchStatus();
                 } catch (error) {
                     tg.HapticFeedback.notificationOccurred('error');
-                    console.error(`Failed to ${endpoint}:`, error);
-                    throw error; // Re-throw to be caught by the caller
+                    console.error(`Fallimento ${endpoint}:`, error);
+                    throw error;
                 } finally {
                     subscribeButton.disabled = false;
                     unsubscribeButton.disabled = false;
@@ -476,22 +494,25 @@ async def root():
             }
 
             function initializeApp() {
+                logDebug("Inizializzazione App...");
                 try {
                     if (!window.Telegram || !window.Telegram.WebApp) {
-                        showError("L'oggetto Telegram WebApp non è disponibile.");
-                        return;
+                        throw new Error("L'oggetto Telegram.WebApp non è disponibile.");
                     }
+                    logDebug("Oggetto Telegram.WebApp trovato.");
                     const tg = window.Telegram.WebApp;
 
                     const userId = tg.initDataUnsafe?.user?.id;
                     if (!userId) {
-                        showError("I dati utente di Telegram non sono disponibili. Assicurati di avviare l'app da un client Telegram aggiornato.");
-                        return;
+                        throw new Error("I dati utente (initDataUnsafe) non sono disponibili.");
                     }
+                    logDebug(`ID Utente trovato: ${userId}`);
 
                     tg.ready();
+                    logDebug("Telegram.WebApp.ready() chiamato.");
                     tg.expand();
                     
+                    logDebug("Impostazione colori tema...");
                     document.documentElement.style.setProperty('--telegram-bg-color', tg.themeParams.bg_color || '#ffffff');
                     document.documentElement.style.setProperty('--telegram-text-color', tg.themeParams.text_color || '#000000');
                     document.documentElement.style.setProperty('--telegram-hint-color', tg.themeParams.hint_color || '#999999');
@@ -500,6 +521,7 @@ async def root():
                     document.documentElement.style.setProperty('--telegram-button-text-color', tg.themeParams.button_text_color || '#ffffff');
                     document.documentElement.style.setProperty('--telegram-secondary-bg-color', tg.themeParams.secondary_bg_color || '#f3f3f3');
 
+                    logDebug("Aggiunta event listeners...");
                     refreshButton.addEventListener('click', () => {
                         fetchStatus(true).catch(err => showError(`Fallimento aggiornamento: ${err.message}`));
                     });
@@ -513,6 +535,7 @@ async def root():
                     fetchStatus().catch(err => showError(`Fallimento caricamento iniziale: ${err.message}`));
                 
                 } catch(e) {
+                    logDebug(`ERRORE INIZIALIZZAZIONE: ${e.message}`);
                     showError(`Errore durante l'inizializzazione: ${e.message}`);
                 }
             }
