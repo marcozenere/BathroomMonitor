@@ -325,7 +325,8 @@ async def root():
             #error-view { color: #ef4444; background-color: #ffebee; padding: 1rem; border-radius: 0.5rem; text-align: center; }
             .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; }
             @keyframes spin { to { transform: rotate(360deg); } }
-            #debug-log { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; font-family: monospace; font-size: 10px; max-height: 100px; overflow-y: scroll; padding: 5px; z-index: 9999; }
+            #debug-log { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.8); color: white; font-family: monospace; font-size: 11px; max-height: 120px; overflow-y: scroll; padding: 8px; z-index: 9999; border-top: 1px solid #4a4a4a;}
+            #debug-log p { margin: 0; padding: 2px 0; border-bottom: 1px solid #333;}
         </style>
     </head>
     <body>
@@ -362,6 +363,7 @@ async def root():
         <div id="debug-log"></div>
 
         <script>
+            let appInitialized = false;
             const debugLog = document.getElementById('debug-log');
             function logDebug(message) {
                 console.log(message);
@@ -370,6 +372,8 @@ async def root():
                 debugLog.appendChild(p);
                 debugLog.scrollTop = debugLog.scrollHeight;
             }
+            logDebug("Script block sta eseguendo.");
+
 
             window.onerror = function(message, source, lineno, colno, error) {
                 logDebug(`ERRORE GLOBALE: ${message}`);
@@ -399,6 +403,7 @@ async def root():
             };
             
             function showError(message) {
+                logDebug(`Mostra Errore: ${message}`);
                 loadingView.classList.add('hidden');
                 appView.classList.add('hidden');
                 errorView.classList.remove('hidden');
@@ -494,6 +499,11 @@ async def root():
             }
 
             function initializeApp() {
+                if(appInitialized) {
+                    logDebug("Inizializzazione già avvenuta, esco.");
+                    return;
+                }
+                appInitialized = true;
                 logDebug("Inizializzazione App...");
                 try {
                     if (!window.Telegram || !window.Telegram.WebApp) {
@@ -540,7 +550,15 @@ async def root():
                 }
             }
 
-            window.addEventListener('load', initializeApp);
+            window.addEventListener('DOMContentLoaded', () => {
+                logDebug("Evento DOMContentLoaded scattato.");
+                initializeApp();
+            });
+            setTimeout(() => {
+                logDebug("Timeout di fallback scattato.");
+                initializeApp();
+            }, 500);
+
         </script>
     </body>
     </html>
