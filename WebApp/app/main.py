@@ -103,27 +103,29 @@ async def mqtt_listener():
             async with MQTTClient(hostname=MQTT_BROKER, port=MQTT_PORT) as client:
                 logger.info("[MQTT] Connected successfully.")
                 await client.subscribe(MQTT_SENSOR_TOPIC)
-                async for message in client.messages:
-                    payload = message.payload.decode().strip()
-                    logger.info(f"[MQTT] {message.topic}: {payload}")
+                # Use a nested context manager for messages to fix the __aiter__ error.
+                async with client.messages() as messages:
+                    async for message in messages:
+                        payload = message.payload.decode().strip()
+                        logger.info(f"[MQTT] {message.topic}: {payload}")
 
-                    new_state = "detected" if payload == "detected" else "clear"
+                        new_state = "detected" if payload == "detected" else "clear"
 
-                    redis_client = app_context.get('redis_client')
-                    if not redis_client:
-                        logger.error("[MQTT] Redis client not available in context.")
-                        continue
+                        redis_client = app_context.get('redis_client')
+                        if not redis_client:
+                            logger.error("[MQTT] Redis client not available in context.")
+                            continue
 
-                    # Because decode_responses=True, Redis returns strings, not bytes.
-                    previous_state = await redis_client.get(REDIS_KEY_STATE) or "unknown"
+                        # Because decode_responses=True, Redis returns strings, not bytes.
+                        previous_state = await redis_client.get(REDIS_KEY_STATE) or "unknown"
 
-                    if new_state != previous_state:
-                        await redis_client.set(REDIS_KEY_STATE, new_state)
-                        logger.info(f"State changed from '{previous_state}' to '{new_state}'")
-                        if new_state == "clear":
-                            asyncio.create_task(notify_subscribers(new_state))
-                    else:
-                        logger.info(f"State remained '{new_state}'. No change.")
+                        if new_state != previous_state:
+                            await redis_client.set(REDIS_KEY_STATE, new_state)
+                            logger.info(f"State changed from '{previous_state}' to '{new_state}'")
+                            if new_state == "clear":
+                                asyncio.create_task(notify_subscribers(new_state))
+                        else:
+                            logger.info(f"State remained '{new_state}'. No change.")
 
         except MqttError as e:
             logger.error(f"[MQTT] Connection error: {e}. Reconnecting in {reconnect_interval}s...")
