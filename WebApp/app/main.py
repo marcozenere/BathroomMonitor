@@ -164,6 +164,10 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Failed to connect to Redis during startup.")
 
     app_context['redis_client'] = redis_client
+    
+    # Set an initial state if one doesn't exist, to avoid a null state on first run
+    await redis_client.setnx(REDIS_KEY_STATE, "unknown")
+    logger.info("Ensured initial Redis state is set.")
 
     # Explicitly disable the Updater, as it's not needed for a webhook bot.
     # This prevents the AttributeError during initialization on Render.
@@ -278,11 +282,20 @@ async def telegram_webhook(req: Request):
 # -------------------
 # API ENDPOINTS FOR WEB APP
 # -------------------
-@app.get("/api/status")
-async def get_status():
+@app.get("/api/status/{user_id}")
+async def get_status(user_id: int):
     redis_client = app_context['redis_client']
-    current_state = await redis_client.get(REDIS_KEY_STATE) or "unknown"
-    return {"status": current_state}
+    # Use a pipeline for efficiency, getting both values in one Redis roundtrip.
+    pipe = redis_client.pipeline()
+    pipe.get(REDIS_KEY_STATE)
+    pipe.sismember(REDIS_KEY_SUBSCRIBERS, str(user_id))
+    results = await pipe.execute()
+    
+    current_state = results[0] or "unknown"
+    is_subscribed = bool(results[1])
+
+    return {"status": current_state, "is_subscribed": is_subscribed}
+
 
 @app.post("/api/subscribe")
 async def subscribe_user(user_action: UserAction):
@@ -405,17 +418,39 @@ async def root():
                 text-align: center;
                 color: #ef4444;
             }
+             #loading-view {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                height: 80vh;
+            }
+            .spinner {
+                width: 56px;
+                height: 56px;
+                border-radius: 50%;
+                border: 5px solid #e5e7eb;
+                border-top-color: #3b82f6;
+                animation: spin 1s linear infinite;
+            }
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
         </style>
     </head>
     <body>
+        <div id="loading-view">
+            <div class="spinner"></div>
+            <p style="margin-top: 1rem; color: var(--telegram-hint-color);">Caricamento...</p>
+        </div>
 
-        <div id="app-view">
-            <div id="status-card" class="status-card unknown">
+        <div id="app-view" class="hidden">
+            <div id="status-card" class="status-card">
                 <div id="status-icon" class="status-icon">
                     <!-- SVG Icon will be injected here -->
                 </div>
-                <h1 id="status-text" class="status-text unknown">Caricamento...</h1>
-                <p id="status-description" class="status-description">Sto controllando lo stato del bagno.</p>
+                <h1 id="status-text" class="status-text"></h1>
+                <p id="status-description" class="status-description"></p>
             </div>
 
             <button id="subscribe-button" class="action-button hidden">
@@ -437,63 +472,69 @@ async def root():
             const tg = window.Telegram.WebApp;
 
             // DOM Elements
+            const loadingView = document.getElementById('loading-view');
+            const appView = document.getElementById('app-view');
+            const errorView = document.getElementById('error-view');
             const statusCard = document.getElementById('status-card');
             const statusIcon = document.getElementById('status-icon');
             const statusText = document.getElementById('status-text');
             const statusDescription = document.getElementById('status-description');
             const subscribeButton = document.getElementById('subscribe-button');
             const unsubscribeButton = document.getElementById('unsubscribe-button');
-            const appView = document.getElementById('app-view');
-            const errorView = document.getElementById('error-view');
-
+            
             const userId = tg.initDataUnsafe?.user?.id;
 
             const icons = {
                 clear: `<svg class="text-green-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M2 20h17"/><path d="M10 12v.01"/></svg>`,
                 detected: `<svg class="text-red-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14"/><path d="M2 20h20"/><path d="M14 12v.01"/></svg>`,
-                unknown: `<svg class="text-gray-500 animate-spin" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`
+                unknown: `<svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`
             };
 
-            function updateUI(state) {
+            function updateUI(state, isSubscribed) {
+                loadingView.classList.add('hidden');
+                appView.classList.remove('hidden');
+
                 // Update Card
                 statusCard.className = 'status-card ' + state;
                 statusIcon.innerHTML = icons[state] || icons.unknown;
-
-                // Update Text
                 statusText.className = 'status-text ' + state;
+
+                // Update Text and Buttons
+                subscribeButton.classList.add('hidden');
+                unsubscribeButton.classList.add('hidden');
+
                 if (state === 'clear') {
                     statusText.textContent = 'Libero';
                     statusDescription.textContent = 'Il bagno è disponibile. Corri!';
-                    subscribeButton.classList.add('hidden');
-                    unsubscribeButton.classList.add('hidden');
                 } else if (state === 'detected') {
                     statusText.textContent = 'Occupato';
-                    statusDescription.textContent = 'Qualcuno è dentro. Vuoi essere avvisato?';
-                    subscribeButton.classList.remove('hidden');
-                    unsubscribeButton.classList.remove('hidden');
+                    if (isSubscribed) {
+                        statusDescription.textContent = 'Sei in lista. Riceverai una notifica.';
+                        unsubscribeButton.classList.remove('hidden');
+                    } else {
+                        statusDescription.textContent = 'Qualcuno è dentro. Vuoi essere avvisato?';
+                        subscribeButton.classList.remove('hidden');
+                    }
                 } else {
                     statusText.textContent = 'Sconosciuto';
                     statusDescription.textContent = 'Non riesco a determinare lo stato del bagno.';
-                    subscribeButton.classList.add('hidden');
-                    unsubscribeButton.classList.add('hidden');
                 }
             }
 
             async function fetchStatus() {
                 try {
-                    const response = await fetch('/api/status');
+                    const response = await fetch(`/api/status/${userId}`);
                     if (!response.ok) throw new Error('Network response was not ok');
                     const data = await response.json();
-                    updateUI(data.status);
+                    updateUI(data.status, data.is_subscribed);
                 } catch (error) {
                     console.error('Failed to fetch status:', error);
-                    updateUI('unknown');
+                    updateUI('unknown', false);
                 }
             }
 
             async function handleSubscribe() {
                 tg.HapticFeedback.impactOccurred('light');
-                statusDescription.textContent = 'Iscrizione in corso...';
                 subscribeButton.disabled = true;
                 try {
                     const response = await fetch('/api/subscribe', {
@@ -502,10 +543,9 @@ async def root():
                         body: JSON.stringify({ user_id: userId })
                     });
                     if (!response.ok) throw new Error('Subscription failed');
-                    statusDescription.textContent = 'Fatto! Riceverai una notifica.';
                     tg.HapticFeedback.notificationOccurred('success');
+                    await fetchStatus(); // Refresh UI immediately
                 } catch (error) {
-                    statusDescription.textContent = 'Errore durante l'iscrizione.';
                     tg.HapticFeedback.notificationOccurred('error');
                 } finally {
                      subscribeButton.disabled = false;
@@ -514,7 +554,6 @@ async def root():
             
             async function handleUnsubscribe() {
                 tg.HapticFeedback.impactOccurred('light');
-                statusDescription.textContent = 'Cancellazione in corso...';
                 unsubscribeButton.disabled = true;
                 try {
                     const response = await fetch('/api/unsubscribe', {
@@ -523,10 +562,9 @@ async def root():
                         body: JSON.stringify({ user_id: userId })
                     });
                     if (!response.ok) throw new Error('Unsubscription failed');
-                    statusDescription.textContent = 'Non riceverai più notifiche.';
                     tg.HapticFeedback.notificationOccurred('success');
+                    await fetchStatus(); // Refresh UI immediately
                 } catch (error) {
-                    statusDescription.textContent = 'Errore durante la cancellazione.';
                     tg.HapticFeedback.notificationOccurred('error');
                 } finally {
                      unsubscribeButton.disabled = false;
@@ -535,6 +573,7 @@ async def root():
 
             function initializeApp() {
                 if (!userId) {
+                    loadingView.classList.add('hidden');
                     appView.classList.add('hidden');
                     errorView.classList.remove('hidden');
                     return;
