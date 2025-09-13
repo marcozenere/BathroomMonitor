@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 import uvicorn
 from aiomqtt import Client as MQTTClient, MqttError
 from fastapi import FastAPI, Request, HTTPException
@@ -151,16 +152,16 @@ async def lifespan(app: FastAPI):
             connected_to_redis = True
             logger.info("Redis connection established.")
             break
-        except redis.exceptions.ConnectionError:
+        except RedisConnectionError:
             logger.warning(f"Redis connection attempt {attempt + 1} failed. Retrying in 3 seconds...")
             await asyncio.sleep(3)
-    
+
     if not connected_to_redis:
         logger.error("Could not establish connection to Redis after multiple attempts.")
         raise RuntimeError("Failed to connect to Redis during startup.")
 
     app_context['redis_client'] = redis_client
-    
+
     # Initialize Telegram Bot Application
     bot_app = Application.builder().token(BOT_TOKEN).build()
     app_context['bot_app'] = bot_app
