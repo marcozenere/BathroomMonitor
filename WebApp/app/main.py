@@ -162,9 +162,9 @@ async def lifespan(app: FastAPI):
 
     app_context['redis_client'] = redis_client
 
-    # Revert to the standard Application.builder() method.
-    # This is the correct way to initialize the bot and avoids the TypeError.
-    bot_app = Application.builder().token(BOT_TOKEN).build()
+    # Explicitly disable the Updater, as it's not needed for a webhook bot.
+    # This prevents the AttributeError during initialization on Render.
+    bot_app = Application.builder().token(BOT_TOKEN).updater(None).build()
     app_context['bot_app'] = bot_app
 
     bot_app.add_handler(CommandHandler("start", start_command))
