@@ -396,7 +396,7 @@ async def root():
             const icons = {
                 clear: `<svg class="text-green-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M2 20h17"/><path d="M10 12v.01"/></svg>`,
                 detected: `<svg class="text-red-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14"/><path d="M2 20h20"/><path d="M14 12v.01"/></svg>`,
-                unknown: `<svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`
+                unknown: `<svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`
             };
             
             function showError(message) {
@@ -498,15 +498,15 @@ async def root():
             function initializeApp() {
                 logDebug("Inizializzazione App...");
                 try {
-                    if (!window.Telegram || !window.Telegram.WebApp) {
-                        throw new Error("L'oggetto Telegram.WebApp non è disponibile.");
+                    if (!window.Telegram || !window.Telegram.WebApp || !window.Telegram.WebApp.initDataUnsafe) {
+                        throw new Error("L'oggetto Telegram.WebApp o initDataUnsafe non è ancora disponibile.");
                     }
-                    logDebug("Oggetto Telegram.WebApp trovato.");
+                    logDebug("Oggetto Telegram.WebApp e initDataUnsafe trovati.");
                     const tg = window.Telegram.WebApp;
 
-                    const userId = tg.initDataUnsafe?.user?.id;
+                    const userId = tg.initDataUnsafe.user?.id;
                     if (!userId) {
-                        throw new Error("I dati utente (initDataUnsafe) non sono disponibili.");
+                        throw new Error("I dati utente (initDataUnsafe.user) non sono disponibili.");
                     }
                     logDebug(`ID Utente trovato: ${userId}`);
 
@@ -542,9 +542,29 @@ async def root():
                 }
             }
 
-            // --- NEW: Direct initialization ---
-            logDebug("Tentativo di avvio immediato.");
-            initializeApp();
+            function waitForTelegram() {
+                logDebug("In attesa di Telegram.WebApp...");
+                let attempts = 0;
+                const maxAttempts = 100; // 5 secondi di timeout
+
+                const interval = setInterval(() => {
+                    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
+                        logDebug("Telegram.WebApp e i dati utente sono pronti! Avvio l'app.");
+                        clearInterval(interval);
+                        initializeApp();
+                    } else {
+                        attempts++;
+                        logDebug(`Tentativo ${attempts}/${maxAttempts}...`);
+                        if (attempts >= maxAttempts) {
+                            clearInterval(interval);
+                            logDebug("Timeout: Telegram.WebApp o i dati utente non sono stati trovati.");
+                            showError("Impossibile caricare i dati da Telegram. Assicurati che il tuo client sia aggiornato e prova a riavviare l'app.");
+                        }
+                    }
+                }, 50);
+            }
+
+            waitForTelegram();
             
         </script>
     </body>
