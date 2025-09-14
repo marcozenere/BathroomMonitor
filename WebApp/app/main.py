@@ -320,23 +320,17 @@ async def root():
             .action-button:disabled { background-color: #d1d5db; cursor: not-allowed; }
             .action-button svg { margin-right: 0.5rem; }
             .hidden { display: none; }
-            #loading-view { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; }
             #error-view { color: #ef4444; background-color: #ffebee; padding: 1rem; border-radius: 0.5rem; text-align: center; }
-            .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; }
-            @keyframes spin { to { transform: rotate(360deg); } }
         </style>
     </head>
     <body>
-        <div id="loading-view">
-            <div class="spinner"></div>
-            <p style="margin-top: 1rem; color: var(--telegram-hint-color);">Caricamento...</p>
-        </div>
-
-        <div id="app-view" class="hidden w-full max-w-md flex flex-col items-center">
-            <div id="status-card" class="status-card">
-                <div id="status-icon" class="status-icon"></div>
-                <h1 id="status-text" class="status-text"></h1>
-                <p id="status-description" class="status-description"></p>
+        <div id="app-view" class="w-full max-w-md flex flex-col items-center">
+            <div id="status-card" class="status-card unknown">
+                <div id="status-icon" class="status-icon">
+                    <svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+                </div>
+                <h1 id="status-text" class="status-text unknown">Caricamento...</h1>
+                <p id="status-description" class="status-description">Recupero informazioni...</p>
             </div>
             <button id="subscribe-button" class="action-button hidden">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
@@ -362,7 +356,6 @@ async def root():
             const deviceId = "device1";
 
             // DOM Elements
-            const loadingView = document.getElementById('loading-view');
             const appView = document.getElementById('app-view');
             const errorView = document.getElementById('error-view');
             const errorMessage = document.getElementById('error-message');
@@ -380,7 +373,6 @@ async def root():
             };
             
             function showError(message) {
-                loadingView.classList.add('hidden');
                 appView.classList.add('hidden');
                 errorView.classList.remove('hidden');
                 errorMessage.textContent = message;
@@ -388,7 +380,6 @@ async def root():
 
             function updateUI(state, isSubscribed) {
                 errorView.classList.add('hidden');
-                loadingView.classList.add('hidden');
                 appView.classList.remove('hidden');
 
                 statusCard.className = 'status-card ' + state;
@@ -425,7 +416,6 @@ async def root():
                 
                 const response = await fetch(`/api/status/${deviceId}/${userId}`);
                 if (!response.ok) {
-                    // Non mostriamo un errore fatale per un singolo fallimento di refresh
                     console.error(`Errore di rete: ${response.status} ${response.statusText}`);
                     return; 
                 }
@@ -479,14 +469,12 @@ async def root():
 
                     subscribeButton.addEventListener('click', () => handleUserAction('/api/subscribe'));
                     unsubscribeButton.addEventListener('click', () => handleUserAction('/api/unsubscribe'));
-
-                    // Fetch iniziale
+                    
                     fetchStatus().catch(err => showError(`Fallimento caricamento iniziale: ${err.message}`));
                     
-                    // Avvia l'aggiornamento automatico
                     setInterval(() => {
                         fetchStatus().catch(err => console.error("Errore durante l'aggiornamento automatico:", err));
-                    }, 5000); // 5 secondi
+                    }, 5000);
 
                 } catch(e) {
                     showError(`Errore durante l'inizializzazione: ${e.message}`);
@@ -495,7 +483,7 @@ async def root():
 
             function waitForTelegram() {
                 let attempts = 0;
-                const maxAttempts = 100; // 5 secondi di timeout
+                const maxAttempts = 100;
 
                 const interval = setInterval(() => {
                     if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {

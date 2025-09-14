@@ -1,79 +1,138 @@
 #include <WiFi.h>
+#include <PubSubClient.h>
 
 const char* ssid = "Zenet";
 const char* password = "20a06a1987";
+const char* mqtt_broker = "broker.hivemq.com";
+const int mqtt_port = 1883;
+const char* device_id = "device1";
+char mqtt_topic[50];
+// --- END CONFIGURATION ---
 
-// Ultrasonic sensor pins
-const int trigPin = 13;   // GPIO for Trigger
-const int echoPin = 12;  // GPIO for Echo
+const int trigPin = 13;
+const int echoPin = 12;
+float detectionThresholdCM = 100.0; // Valore da calibrare
+long measurementInterval = 1000;
 
-// Configuration parameters
-float maxDistanceCM = 200.0; // maximum distance in cm to detect
-float detectionThresholdCM = 100.0; // distance below which we consider "detected"
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+String last_state = "";
 
-// Function declaration (avoids scope issue)
+// Function declarations
 float getDistanceCM();
+void reconnect_mqtt();
+void publish_current_state();
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(10);
+  snprintf(mqtt_topic, sizeof(mqtt_topic), "esp32/%s/sensor", device_id);
 
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
-
   WiFi.begin(ssid, password);
-
-  // Wait until connected
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-
-  Serial.println();
-  Serial.println("WiFi connected!");
+  Serial.println("\nWiFi connected!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
+  mqttClient.setServer(mqtt_broker, mqtt_port);
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
-
-  Serial.println("Ultrasonic sensor ready...");
+  Serial.println("Ultrasonic sensor ready.");
 }
 
 void loop() {
+  if (!mqttClient.connected()) {
+    reconnect_mqtt();
+  }
+  mqttClient.loop();
+
+  // Get distance reading
   float distance = getDistanceCM();
 
-  Serial.print("Distance: ");
+  // *** NEW: Detailed debug output for calibration ***
+  // This will print the exact distance every second.
+  Serial.print("Distance reading: ");
   Serial.print(distance);
   Serial.println(" cm");
+  // *** END of debug output ***
 
+  // Determine current state based on the reading
+  String current_state;
   if (distance > 0 && distance < detectionThresholdCM) {
-    Serial.println("Object detected within threshold!");
-    delay(500); // measurement interval
-  }else{
-    delay(1000);
+    current_state = "detected";
+  } else {
+    current_state = "clear";
+  }
+
+  // Only publish if the state has actually changed during the loop
+  if (current_state != last_state) {
+    Serial.print("State changed! New state: ");
+    Serial.println(current_state);
+    if (mqttClient.publish(mqtt_topic, current_state.c_str())) {
+        Serial.println("MQTT message published successfully.");
+        last_state = current_state; 
+    } else {
+        Serial.println("MQTT publish failed.");
+    }
+  }
+
+  delay(measurementInterval);
+}
+
+void reconnect_mqtt() {
+  while (!mqttClient.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    if (mqttClient.connect("esp32-bathroom-sensor-client")) {
+      Serial.println("connected!");
+      publish_current_state();
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
   }
 }
 
-// Function definition
+void publish_current_state() {
+  String current_state;
+  float distance = getDistanceCM();
+  if (distance > 0 && distance < detectionThresholdCM) {
+    current_state = "detected";
+  } else {
+    current_state = "clear";
+  }
+  
+  Serial.print("Publishing initial/reconnect state: ");
+  Serial.println(current_state);
+
+  if (mqttClient.publish(mqtt_topic, current_state.c_str())) {
+      Serial.println("Initial state published successfully.");
+      last_state = current_state;
+  } else {
+      Serial.println("Initial state publish failed.");
+  }
+}
+
 float getDistanceCM() {
-  // Clear trigger pin
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
-
-  // Send 10µs HIGH pulse to trigger
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
-  // Measure echo duration (in microseconds)
-  long duration = pulseIn(echoPin, HIGH, maxDistanceCM * 58 * 2); 
+  long duration = pulseIn(echoPin, HIGH, 30000);
+
   if (duration == 0) {
-    return -1; // No reading (timeout)
+    return -1.0;
   }
 
-  // Convert to centimeters
-  float distance = duration / 58.0; // 58 µs per cm (round trip)
+  float distance = duration / 58.2;
   return distance;
 }
