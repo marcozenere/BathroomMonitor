@@ -295,91 +295,243 @@ async def root():
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #ffffff; color: #000000; margin: 0; padding: 1rem; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; text-align: center; }
-            #debug-log { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.8); color: white; font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: scroll; padding: 8px; z-index: 9999; border-top: 1px solid #4a4a4a;}
-            #debug-log p { margin: 0; padding: 2px 0; border-bottom: 1px solid #333;}
-            .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; margin: 0 auto 1rem; }
+            :root {
+                --telegram-bg-color: #ffffff;
+                --telegram-text-color: #000000;
+                --telegram-hint-color: #999999;
+                --telegram-link-color: #2481cc;
+                --telegram-button-color: #2481cc;
+                --telegram-button-text-color: #ffffff;
+                --telegram-secondary-bg-color: #f3f3f3;
+            }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--telegram-bg-color); color: var(--telegram-text-color); margin: 0; padding: 1rem; display: flex; flex-direction: column; align-items: center; min-height: 100vh; box-sizing: border-box; }
+            .status-card { width: 100%; max-width: 400px; border-radius: 1rem; padding: 2rem; text-align: center; transition: all 0.3s ease; margin-bottom: 1rem; }
+            .status-card.clear { background-color: #e0f8e9; box-shadow: 0 4px 20px rgba(45, 212, 111, 0.2); }
+            .status-card.detected { background-color: #ffebee; box-shadow: 0 4px 20px rgba(239, 83, 80, 0.2); }
+            .status-card.unknown { background-color: #f3f4f6; box-shadow: 0 4px 20px rgba(156, 163, 175, 0.2); }
+            .status-icon { width: 64px; height: 64px; margin: 0 auto 1rem; }
+            .status-text { font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
+            .status-text.clear { color: #22c55e; }
+            .status-text.detected { color: #ef4444; }
+            .status-text.unknown { color: #6b7280; }
+            .status-description { color: var(--telegram-hint-color); min-height: 20px; transition: color 0.3s; }
+            .action-button { display: flex; align-items: center; justify-content: center; width: 100%; max-width: 400px; padding: 0.8rem 1rem; margin-top: 0.5rem; border: none; border-radius: 0.75rem; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s; background-color: var(--telegram-button-color); color: var(--telegram-button-text-color); }
+            .refresh-button { background-color: var(--telegram-secondary-bg-color); color: var(--telegram-link-color); }
+            .action-button:active { transform: scale(0.98); }
+            .action-button:disabled { background-color: #d1d5db; cursor: not-allowed; }
+            .action-button svg { margin-right: 0.5rem; }
+            .hidden { display: none; }
+            #loading-view { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; }
+            #error-view { color: #ef4444; background-color: #ffebee; padding: 1rem; border-radius: 0.5rem; text-align: center; }
+            .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; }
             @keyframes spin { to { transform: rotate(360deg); } }
         </style>
     </head>
     <body>
-        <div id="diagnostic-view">
+        <div id="loading-view">
             <div class="spinner"></div>
-            <h1>Diagnostica in corso...</h1>
-            <p style="margin-top: 1rem; color: #999999;">Controlla i messaggi nella console di debug in basso.</p>
+            <p style="margin-top: 1rem; color: var(--telegram-hint-color);">Caricamento...</p>
         </div>
-        
-        <div id="debug-log"></div>
+
+        <div id="app-view" class="hidden w-full max-w-md flex flex-col items-center">
+            <div id="status-card" class="status-card">
+                <div id="status-icon" class="status-icon"></div>
+                <h1 id="status-text" class="status-text"></h1>
+                <p id="status-description" class="status-description"></p>
+            </div>
+            <button id="refresh-button" class="action-button refresh-button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                Aggiorna Stato
+            </button>
+            <button id="subscribe-button" class="action-button hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                Avvisami quando è libero
+            </button>
+            <button id="unsubscribe-button" class="action-button hidden">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 3 9H3a21.3 21.3 0 0 0 3-9A6 6 0 0 1 8.7 3"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></svg>
+                Annulla notifica
+            </button>
+        </div>
+
+        <div id="error-view" class="hidden">
+            <h3>Si è verificato un errore</h3>
+            <p id="error-message" style="margin-top: 0.5rem; font-family: monospace; font-size: 0.8rem;"></p>
+        </div>
 
         <script>
-            const debugLog = document.getElementById('debug-log');
-            const diagnosticView = document.getElementById('diagnostic-view');
+            window.onerror = function(message, source, lineno, colno, error) {
+                showError('Errore non gestito: ' + message);
+                return true;
+            };
 
-            function logDebug(message) {
-                console.log(message);
-                const p = document.createElement('p');
-                p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-                debugLog.appendChild(p);
-                debugLog.scrollTop = debugLog.scrollHeight;
+            const deviceId = "device1";
+
+            // DOM Elements
+            const loadingView = document.getElementById('loading-view');
+            const appView = document.getElementById('app-view');
+            const errorView = document.getElementById('error-view');
+            const errorMessage = document.getElementById('error-message');
+            const statusCard = document.getElementById('status-card');
+            const statusIcon = document.getElementById('status-icon');
+            const statusText = document.getElementById('status-text');
+            const statusDescription = document.getElementById('status-description');
+            const refreshButton = document.getElementById('refresh-button');
+            const subscribeButton = document.getElementById('subscribe-button');
+            const unsubscribeButton = document.getElementById('unsubscribe-button');
+
+            const icons = {
+                clear: `<svg class="text-green-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M2 20h17"/><path d="M10 12v.01"/></svg>`,
+                detected: `<svg class="text-red-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14"/><path d="M2 20h20"/><path d="M14 12v.01"/></svg>`,
+                unknown: `<svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`
+            };
+            
+            function showError(message) {
+                loadingView.classList.add('hidden');
+                appView.classList.add('hidden');
+                errorView.classList.remove('hidden');
+                errorMessage.textContent = message;
             }
 
-            function endDiagnostics(success, message) {
-                if (success) {
-                    diagnosticView.innerHTML = `<h1>Diagnostica Completata con Successo!</h1><p>${message}</p><p>Ora puoi ripristinare il file main.py precedente.</p>`;
+            function updateUI(state, isSubscribed) {
+                errorView.classList.add('hidden');
+                loadingView.classList.add('hidden');
+                appView.classList.remove('hidden');
+
+                statusCard.className = 'status-card ' + state;
+                statusIcon.innerHTML = icons[state] || icons.unknown;
+                statusText.className = 'status-text ' + state;
+
+                subscribeButton.classList.add('hidden');
+                unsubscribeButton.classList.add('hidden');
+
+                if (state === 'clear') {
+                    statusText.textContent = 'Libero';
+                    statusDescription.textContent = 'Il bagno è disponibile. Corri!';
+                } else if (state === 'detected') {
+                    statusText.textContent = 'Occupato';
+                    if (isSubscribed) {
+                        statusDescription.textContent = 'Sei in lista. Riceverai una notifica.';
+                        unsubscribeButton.classList.remove('hidden');
+                    } else {
+                        statusDescription.textContent = 'Qualcuno è dentro. Vuoi essere avvisato?';
+                        subscribeButton.classList.remove('hidden');
+                    }
                 } else {
-                    diagnosticView.innerHTML = `<h1>Diagnostica Fallita</h1><p>${message}</p>`;
+                    statusText.textContent = 'Sconosciuto';
+                    statusDescription.textContent = 'Non riesco a determinare lo stato del bagno.';
                 }
             }
 
-            try {
-                logDebug("--- Inizio Diagnostica Script ---");
-
-                if (window) {
-                    logDebug("1. Oggetto 'window' trovato.");
-                } else {
-                    logDebug("1. ERRORE: Oggetto 'window' NON trovato.");
-                    throw new Error("Ambiente base non valido: 'window' non esiste.");
-                }
-
-                if (window.Telegram) {
-                    logDebug("2. Oggetto 'window.Telegram' trovato.");
-                } else {
-                    logDebug("2. ERRORE: Oggetto 'window.Telegram' NON trovato.");
-                    throw new Error("'window.Telegram' non trovato. Lo script telegram-web-app.js non è stato caricato o è stato bloccato.");
-                }
-                
-                if (window.Telegram.WebApp) {
-                    logDebug("3. Oggetto 'window.Telegram.WebApp' trovato.");
-                } else {
-                    logDebug("3. ERRORE: Oggetto 'window.Telegram.WebApp' NON trovato.");
-                    throw new Error("'window.Telegram.WebApp' non trovato. L'inizializzazione dello script di Telegram è fallita.");
-                }
-                
+            async function fetchStatus(isManualRefresh = false) {
                 const tg = window.Telegram.WebApp;
-
-                // A volte initDataUnsafe può essere vuoto all'inizio
-                if (tg.initDataUnsafe) {
-                    logDebug("4. Oggetto 'tg.initDataUnsafe' trovato.");
-                } else {
-                    logDebug("4. ATTENZIONE: 'tg.initDataUnsafe' è vuoto. Questo può essere normale all'avvio.");
+                const userId = tg.initDataUnsafe?.user?.id;
+                if (!userId) {
+                    throw new Error("ID utente non trovato in initDataUnsafe.");
                 }
-
-                if (tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-                    logDebug("5. Oggetto 'tg.initDataUnsafe.user' e ID trovati.");
-                    const userId = tg.initDataUnsafe.user.id;
-                    logDebug(`6. SUCCESSO: ID Utente = ${userId}`);
-                    endDiagnostics(true, "L'ambiente Telegram è stato caricato correttamente.");
-                } else {
-                     logDebug("5. ERRORE: 'tg.initDataUnsafe.user' o il suo ID non sono stati trovati.");
-                     throw new Error("'tg.initDataUnsafe.user.id' non trovato. L'app non ha ricevuto i dati utente da Telegram.");
+                
+                if(isManualRefresh) {
+                    tg.HapticFeedback.impactOccurred('light');
+                    statusDescription.textContent = 'Aggiornamento in corso...';
+                    refreshButton.disabled = true;
                 }
-
-                logDebug("--- Fine Diagnostica Script ---");
-
-            } catch (e) {
-                logDebug(`ERRORE CATTURATO: ${e.message}`);
-                endDiagnostics(false, e.message);
+                
+                const response = await fetch(`/api/status/${deviceId}/${userId}`);
+                if (!response.ok) {
+                    throw new Error(`Errore di rete: ${response.status} ${response.statusText}`);
+                }
+                const data = await response.json();
+                updateUI(data.status, data.is_subscribed);
+                
+                if(isManualRefresh) {
+                    setTimeout(() => { 
+                        statusDescription.textContent = 'Stato aggiornato!'; 
+                        refreshButton.disabled = false;
+                    }, 500);
+                }
             }
+
+            async function handleUserAction(endpoint) {
+                const tg = window.Telegram.WebApp;
+                const userId = tg.initDataUnsafe?.user?.id;
+                tg.HapticFeedback.impactOccurred('light');
+                subscribeButton.disabled = true;
+                unsubscribeButton.disabled = true;
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: userId, device_id: deviceId })
+                    });
+                    if (!response.ok) throw new Error('Azione fallita');
+                    tg.HapticFeedback.notificationOccurred('success');
+                    await fetchStatus();
+                } catch (error) {
+                    tg.HapticFeedback.notificationOccurred('error');
+                    console.error(`Failed to ${endpoint}:`, error);
+                    throw error;
+                } finally {
+                    subscribeButton.disabled = false;
+                    unsubscribeButton.disabled = false;
+                }
+            }
+
+            function initializeApp() {
+                try {
+                    const tg = window.Telegram.WebApp;
+
+                    const userId = tg.initDataUnsafe.user?.id;
+                    if (!userId) {
+                        throw new Error("I dati utente (initDataUnsafe.user) non sono disponibili.");
+                    }
+
+                    tg.ready();
+                    tg.expand();
+                    
+                    document.documentElement.style.setProperty('--telegram-bg-color', tg.themeParams.bg_color || '#ffffff');
+                    document.documentElement.style.setProperty('--telegram-text-color', tg.themeParams.text_color || '#000000');
+                    document.documentElement.style.setProperty('--telegram-hint-color', tg.themeParams.hint_color || '#999999');
+                    document.documentElement.style.setProperty('--telegram-link-color', tg.themeParams.link_color || '#2481cc');
+                    document.documentElement.style.setProperty('--telegram-button-color', tg.themeParams.button_color || '#2481cc');
+                    document.documentElement.style.setProperty('--telegram-button-text-color', tg.themeParams.button_text_color || '#ffffff');
+                    document.documentElement.style.setProperty('--telegram-secondary-bg-color', tg.themeParams.secondary_bg_color || '#f3f3f3');
+
+                    refreshButton.addEventListener('click', () => {
+                        fetchStatus(true).catch(err => showError(`Fallimento aggiornamento: ${err.message}`));
+                    });
+                    subscribeButton.addEventListener('click', () => {
+                        handleUserAction('/api/subscribe').catch(err => showError(`Fallimento iscrizione: ${err.message}`));
+                    });
+                    unsubscribeButton.addEventListener('click', () => {
+                        handleUserAction('/api/unsubscribe').catch(err => showError(`Fallimento cancellazione: ${err.message}`));
+                    });
+
+                    fetchStatus().catch(err => showError(`Fallimento caricamento iniziale: ${err.message}`));
+                
+                } catch(e) {
+                    showError(`Errore durante l'inizializzazione: ${e.message}`);
+                }
+            }
+
+            function waitForTelegram() {
+                let attempts = 0;
+                const maxAttempts = 100; // 5 secondi di timeout
+
+                const interval = setInterval(() => {
+                    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
+                        clearInterval(interval);
+                        initializeApp();
+                    } else {
+                        attempts++;
+                        if (attempts >= maxAttempts) {
+                            clearInterval(interval);
+                            showError("Timeout: Impossibile caricare i dati da Telegram. Assicurati che il tuo client sia aggiornato e prova a riavviare l'app.");
+                        }
+                    }
+                }, 50);
+            }
+
+            waitForTelegram();
+            
         </script>
     </body>
     </html>
