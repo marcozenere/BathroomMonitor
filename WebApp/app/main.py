@@ -363,7 +363,6 @@ async def root():
         <div id="debug-log"></div>
 
         <script>
-            let appInitialized = false;
             const debugLog = document.getElementById('debug-log');
             function logDebug(message) {
                 console.log(message);
@@ -372,9 +371,7 @@ async def root():
                 debugLog.appendChild(p);
                 debugLog.scrollTop = debugLog.scrollHeight;
             }
-            logDebug("Script block sta eseguendo.");
-
-
+            
             window.onerror = function(message, source, lineno, colno, error) {
                 logDebug(`ERRORE GLOBALE: ${message}`);
                 showError('Errore non gestito: ' + message);
@@ -499,11 +496,6 @@ async def root():
             }
 
             function initializeApp() {
-                if(appInitialized) {
-                    logDebug("Inizializzazione già avvenuta, esco.");
-                    return;
-                }
-                appInitialized = true;
                 logDebug("Inizializzazione App...");
                 try {
                     if (!window.Telegram || !window.Telegram.WebApp) {
@@ -550,15 +542,10 @@ async def root():
                 }
             }
 
-            window.addEventListener('DOMContentLoaded', () => {
-                logDebug("Evento DOMContentLoaded scattato.");
-                initializeApp();
-            });
-            setTimeout(() => {
-                logDebug("Timeout di fallback scattato.");
-                initializeApp();
-            }, 500);
-
+            // --- NEW: Direct initialization ---
+            logDebug("Tentativo di avvio immediato.");
+            initializeApp();
+            
         </script>
     </body>
     </html>
