@@ -315,7 +315,7 @@ async def root():
                 align-items: center; 
                 min-height: 100vh; 
                 box-sizing: border-box;
-                background-image: url("data:image/svg+xml,%3csvg width='100' height='100' xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' opacity='0.05'%3e%3cpath d='M25 39.9V100H15V40a1 1 0 0 1-8-8V25h100v10a1 1 0 0 1-8 8V100H85V40a1 1 0 0 1-8-8V25H25v10a1 1 0 0 1-8 8zM15 15V0h10v15H15zm70 0V0h10v15H85z' fill='%23000'/%3e%3c/svg%3e");
+                background-image: url("data:image/svg+xml,%3csvg width='84' height='48' viewBox='0 0 84 48' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M22 24h-22v-24h22v24zM62 0h-20v48h20v-48zM84 24h-20v-24h20v24z' fill='%23000000' fill-opacity='0.05' fill-rule='evenodd'/%3e%3c/svg%3e");
             }
             .status-card { width: 100%; max-width: 400px; border-radius: 1rem; padding: 2rem; text-align: center; transition: all 0.3s ease; margin-bottom: 1rem; }
             .status-card.clear { background-color: #e0f8e9; box-shadow: 0 4px 20px rgba(45, 212, 111, 0.2); }
