@@ -5,7 +5,7 @@ const char* ssid = "Zenet";
 const char* password = "20a06a1987";
 const char* mqtt_broker = "broker.hivemq.com";
 const int mqtt_port = 1883;
-const char* device_id = "device1";
+const char* device_id = "Sensore_Bagno-01";
 char mqtt_topic[50];
 // --- END CONFIGURATION ---
 
