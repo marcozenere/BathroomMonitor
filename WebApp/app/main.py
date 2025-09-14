@@ -292,93 +292,204 @@ async def root():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Stato Bagno</title>
+        <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
-            body { 
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-                background-color: #f0f0f0; 
-                color: #000000; 
-                margin: 0; 
-                padding: 1rem; 
-                display: flex; 
-                align-items: center; 
-                justify-content: center; 
-                min-height: 100vh; 
-                text-align: center;
+            :root {
+                --telegram-bg-color: #ffffff;
+                --telegram-text-color: #000000;
+                --telegram-hint-color: #999999;
+                --telegram-link-color: #2481cc;
+                --telegram-button-color: #2481cc;
+                --telegram-button-text-color: #ffffff;
+                --telegram-secondary-bg-color: #f3f3f3;
             }
-            #status-container {
-                padding: 2rem;
-                border-radius: 1rem;
-                background-color: #ffffff;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            }
-            #status-text {
-                font-size: 2.5rem;
-                font-weight: 700;
-            }
-            #status-description {
-                font-size: 1rem;
-                color: #666666;
-                margin-top: 0.5rem;
-            }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--telegram-bg-color); color: var(--telegram-text-color); margin: 0; padding: 1rem; display: flex; flex-direction: column; align-items: center; min-height: 100vh; box-sizing: border-box; }
+            .status-card { width: 100%; max-width: 400px; border-radius: 1rem; padding: 2rem; text-align: center; transition: all 0.3s ease; margin-bottom: 1rem; }
+            .status-card.clear { background-color: #e0f8e9; box-shadow: 0 4px 20px rgba(45, 212, 111, 0.2); }
+            .status-card.detected { background-color: #ffebee; box-shadow: 0 4px 20px rgba(239, 83, 80, 0.2); }
+            .status-card.unknown { background-color: #f3f4f6; box-shadow: 0 4px 20px rgba(156, 163, 175, 0.2); }
+            .status-icon { width: 64px; height: 64px; margin: 0 auto 1rem; }
+            .status-text { font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
+            .status-text.clear { color: #22c55e; }
+            .status-text.detected { color: #ef4444; }
+            .status-text.unknown { color: #6b7280; }
+            .status-description { color: var(--telegram-hint-color); min-height: 20px; transition: color 0.3s; }
+            .action-button { display: flex; align-items: center; justify-content: center; width: 100%; max-width: 400px; padding: 0.8rem 1rem; margin-top: 0.5rem; border: none; border-radius: 0.75rem; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s; background-color: var(--telegram-button-color); color: var(--telegram-button-text-color); }
+            .action-button:active { transform: scale(0.98); }
+            .action-button:disabled { background-color: #d1d5db; cursor: not-allowed; }
+            .action-button svg { margin-right: 0.5rem; }
+            .hidden { display: none; }
+            #loading-view { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; }
+            #error-view { color: #ef4444; background-color: #ffebee; padding: 1rem; border-radius: 0.5rem; text-align: center; }
+            .spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid #e5e7eb; border-top-color: #3b82f6; animation: spin 1s linear infinite; }
+            @keyframes spin { to { transform: rotate(360deg); } }
         </style>
     </head>
     <body>
-        <div id="status-container">
-            <h1 id="status-text">Caricamento...</h1>
-            <p id="status-description">In attesa di dati dal server.</p>
+        <div id="loading-view">
+            <div class="spinner"></div>
+            <p style="margin-top: 1rem; color: var(--telegram-hint-color);">Caricamento...</p>
+        </div>
+
+        <div id="app-view" class="hidden w-full max-w-md flex flex-col items-center">
+            <div id="status-card" class="status-card">
+                <div id="status-icon" class="status-icon"></div>
+                <h1 id="status-text" class="status-text"></h1>
+                <p id="status-description" class="status-description"></p>
+            </div>
+            <button id="subscribe-button" class="action-button hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                Avvisami quando è libero
+            </button>
+            <button id="unsubscribe-button" class="action-button hidden">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 3 9H3a21.3 21.3 0 0 0 3-9A6 6 0 0 1 8.7 3"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="m2 2 20 20"/></svg>
+                Annulla notifica
+            </button>
+        </div>
+
+        <div id="error-view" class="hidden">
+            <h3>Si è verificato un errore</h3>
+            <p id="error-message" style="margin-top: 0.5rem; font-family: monospace; font-size: 0.8rem;"></p>
         </div>
 
         <script>
+            window.onerror = function(message, source, lineno, colno, error) {
+                showError('Errore non gestito: ' + message);
+                return true;
+            };
+
+            const deviceId = "device1";
+
+            // DOM Elements
+            const loadingView = document.getElementById('loading-view');
+            const appView = document.getElementById('app-view');
+            const errorView = document.getElementById('error-view');
+            const errorMessage = document.getElementById('error-message');
+            const statusCard = document.getElementById('status-card');
+            const statusIcon = document.getElementById('status-icon');
+            const statusText = document.getElementById('status-text');
+            const statusDescription = document.getElementById('status-description');
+            const subscribeButton = document.getElementById('subscribe-button');
+            const unsubscribeButton = document.getElementById('unsubscribe-button');
+
+            const icons = {
+                clear: `<svg class="text-green-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M2 20h17"/><path d="M10 12v.01"/></svg>`,
+                detected: `<svg class="text-red-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14"/><path d="M2 20h20"/><path d="M14 12v.01"/></svg>`,
+                unknown: `<svg class="text-gray-500" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`
+            };
+            
             function showError(message) {
-                const statusText = document.getElementById('status-text');
-                const statusDescription = document.getElementById('status-description');
-                statusText.textContent = "Errore";
-                statusDescription.textContent = message;
-                statusText.style.color = '#ef4444';
+                loadingView.classList.add('hidden');
+                appView.classList.add('hidden');
+                errorView.classList.remove('hidden');
+                errorMessage.textContent = message;
             }
 
-            async function initializeApp() {
+            function updateUI(state, isSubscribed) {
+                errorView.classList.add('hidden');
+                loadingView.classList.add('hidden');
+                appView.classList.remove('hidden');
+
+                statusCard.className = 'status-card ' + state;
+                statusIcon.innerHTML = icons[state] || icons.unknown;
+                statusText.className = 'status-text ' + state;
+
+                subscribeButton.classList.add('hidden');
+                unsubscribeButton.classList.add('hidden');
+
+                if (state === 'clear') {
+                    statusText.textContent = 'Libero';
+                    statusDescription.textContent = 'Il bagno è disponibile. Corri!';
+                } else if (state === 'detected') {
+                    statusText.textContent = 'Occupato';
+                    if (isSubscribed) {
+                        statusDescription.textContent = 'Sei in lista. Riceverai una notifica.';
+                        unsubscribeButton.classList.remove('hidden');
+                    } else {
+                        statusDescription.textContent = 'Qualcuno è dentro. Vuoi essere avvisato?';
+                        subscribeButton.classList.remove('hidden');
+                    }
+                } else {
+                    statusText.textContent = 'Sconosciuto';
+                    statusDescription.textContent = 'Non riesco a determinare lo stato del bagno.';
+                }
+            }
+
+            async function fetchStatus() {
+                const tg = window.Telegram.WebApp;
+                const userId = tg.initDataUnsafe?.user?.id;
+                if (!userId) {
+                    throw new Error("ID utente non trovato in initDataUnsafe.");
+                }
+                
+                const response = await fetch(`/api/status/${deviceId}/${userId}`);
+                if (!response.ok) {
+                    // Non mostriamo un errore fatale per un singolo fallimento di refresh
+                    console.error(`Errore di rete: ${response.status} ${response.statusText}`);
+                    return; 
+                }
+                const data = await response.json();
+                updateUI(data.status, data.is_subscribed);
+            }
+
+            async function handleUserAction(endpoint) {
+                const tg = window.Telegram.WebApp;
+                const userId = tg.initDataUnsafe?.user?.id;
+                tg.HapticFeedback.impactOccurred('light');
+                subscribeButton.disabled = true;
+                unsubscribeButton.disabled = true;
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: userId, device_id: deviceId })
+                    });
+                    if (!response.ok) throw new Error('Azione fallita');
+                    tg.HapticFeedback.notificationOccurred('success');
+                    await fetchStatus();
+                } catch (error) {
+                    tg.HapticFeedback.notificationOccurred('error');
+                    showError(`Fallimento azione: ${error.message}`);
+                } finally {
+                    subscribeButton.disabled = false;
+                    unsubscribeButton.disabled = false;
+                }
+            }
+
+            function initializeApp() {
                 try {
                     const tg = window.Telegram.WebApp;
-                    if (!tg || !tg.initDataUnsafe) {
-                        throw new Error("Ambiente Telegram non pronto.");
-                    }
 
                     const userId = tg.initDataUnsafe.user?.id;
                     if (!userId) {
-                        throw new Error("ID utente non disponibile.");
+                        throw new Error("I dati utente (initDataUnsafe.user) non sono disponibili.");
                     }
-                    
+
                     tg.ready();
                     tg.expand();
+                    
+                    document.documentElement.style.setProperty('--telegram-bg-color', tg.themeParams.bg_color || '#ffffff');
+                    document.documentElement.style.setProperty('--telegram-text-color', tg.themeParams.text_color || '#000000');
+                    document.documentElement.style.setProperty('--telegram-hint-color', tg.themeParams.hint_color || '#999999');
+                    document.documentElement.style.setProperty('--telegram-link-color', tg.themeParams.link_color || '#2481cc');
+                    document.documentElement.style.setProperty('--telegram-button-color', tg.themeParams.button_color || '#2481cc');
+                    document.documentElement.style.setProperty('--telegram-button-text-color', tg.themeParams.button_text_color || '#ffffff');
+                    document.documentElement.style.setProperty('--telegram-secondary-bg-color', tg.themeParams.secondary_bg_color || '#f3f3f3');
 
-                    const response = await fetch(`/api/status/device1/${userId}`);
-                    if (!response.ok) {
-                        throw new Error(`Errore di rete: ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    
-                    const statusText = document.getElementById('status-text');
-                    const statusDescription = document.getElementById('status-description');
-                    
-                    if (data.status === 'clear') {
-                        statusText.textContent = 'Libero';
-                        statusText.style.color = '#22c55e';
-                        statusDescription.textContent = 'Il bagno è disponibile.';
-                    } else if (data.status === 'detected') {
-                        statusText.textContent = 'Occupato';
-                        statusText.style.color = '#ef4444';
-                        statusDescription.textContent = 'Il bagno è attualmente occupato.';
-                    } else {
-                        statusText.textContent = 'Sconosciuto';
-                        statusText.style.color = '#6b7280';
-                        statusDescription.textContent = 'Lo stato del sensore non è noto.';
-                    }
+                    subscribeButton.addEventListener('click', () => handleUserAction('/api/subscribe'));
+                    unsubscribeButton.addEventListener('click', () => handleUserAction('/api/unsubscribe'));
 
-                } catch (e) {
-                    showError(e.message);
+                    // Fetch iniziale
+                    fetchStatus().catch(err => showError(`Fallimento caricamento iniziale: ${err.message}`));
+                    
+                    // Avvia l'aggiornamento automatico
+                    setInterval(() => {
+                        fetchStatus().catch(err => console.error("Errore durante l'aggiornamento automatico:", err));
+                    }, 5000); // 5 secondi
+
+                } catch(e) {
+                    showError(`Errore durante l'inizializzazione: ${e.message}`);
                 }
             }
 
@@ -387,7 +498,7 @@ async def root():
                 const maxAttempts = 100; // 5 secondi di timeout
 
                 const interval = setInterval(() => {
-                    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe) {
+                    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
                         clearInterval(interval);
                         initializeApp();
                     } else {
@@ -401,6 +512,7 @@ async def root():
             }
 
             waitForTelegram();
+            
         </script>
     </body>
     </html>
