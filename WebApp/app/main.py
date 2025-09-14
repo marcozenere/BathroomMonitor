@@ -3,6 +3,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 import re
+from datetime import datetime, timezone, timedelta
 
 import redis.asyncio as redis
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -43,6 +44,10 @@ MQTT_BASE_TOPIC = "esp32/+/sensor" # Wildcard to listen to all devices
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
 WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}" if RENDER_EXTERNAL_URL else None
 
+# LIVENESS CHECK CONFIG
+DEVICE_TIMEOUT_MINUTES = 5
+LIVENESS_CHECK_INTERVAL_SECONDS = 60
+
 # -------------------
 # REDIS KEY HELPERS
 # -------------------
@@ -51,6 +56,9 @@ def redis_key_state(device_id: str) -> str:
 
 def redis_key_subscribers(device_id: str) -> str:
     return f"bathroom:subscribers:{device_id}"
+
+def redis_key_last_seen(device_id: str) -> str:
+    return f"bathroom:last_seen:{device_id}"
 
 # -------------------
 # GLOBAL CONTEXT
@@ -114,7 +122,11 @@ async def mqtt_listener():
                             continue
 
                         key_state = redis_key_state(device_id)
+                        key_last_seen = redis_key_last_seen(device_id)
                         previous_state = await redis_client.get(key_state) or "unknown"
+
+                        # Update last seen timestamp every time we get a message
+                        await redis_client.set(key_last_seen, datetime.now(timezone.utc).isoformat())
 
                         if new_state != previous_state:
                             await redis_client.set(key_state, new_state)
@@ -129,6 +141,33 @@ async def mqtt_listener():
             logger.error(f"[MQTT] Unexpected error: {e}. Restarting listener...")
             await asyncio.sleep(reconnect_interval)
 
+async def check_device_liveness():
+    """Periodically checks if devices are still online, sets state to unknown if not."""
+    while True:
+        await asyncio.sleep(LIVENESS_CHECK_INTERVAL_SECONDS)
+        redis_client = app_context.get('redis_client')
+        if not redis_client:
+            continue
+        
+        try:
+            logger.info("Running device liveness check...")
+            async for key in redis_client.scan_iter("bathroom:state:*"):
+                device_id = key.split(":")[-1]
+                key_last_seen = redis_key_last_seen(device_id)
+                last_seen_str = await redis_client.get(key_last_seen)
+
+                if not last_seen_str:
+                    continue
+
+                last_seen_dt = datetime.fromisoformat(last_seen_str)
+                if (datetime.now(timezone.utc) - last_seen_dt) > timedelta(minutes=DEVICE_TIMEOUT_MINUTES):
+                    current_state = await redis_client.get(key)
+                    if current_state != "unknown":
+                        logger.warning(f"Device '{device_id}' timed out. Setting state to unknown.")
+                        await redis_client.set(key, "unknown")
+
+        except Exception as e:
+            logger.error(f"Error during device liveness check: {e}")
 
 # -------------------
 # FASTAPI LIFESPAN MANAGER
@@ -181,9 +220,11 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("RENDER_EXTERNAL_URL not set. Skipping setup.")
 
-    mqtt_task = asyncio.create_task(mqtt_listener())
-    app_context['mqtt_task'] = mqtt_task
+    app_context['mqtt_task'] = asyncio.create_task(mqtt_listener())
     logger.info("MQTT listener started.")
+    app_context['liveness_task'] = asyncio.create_task(check_device_liveness())
+    logger.info("Device liveness checker started.")
+
 
     yield
 
@@ -191,10 +232,12 @@ async def lifespan(app: FastAPI):
     await app_context['bot_app'].shutdown()
     await app_context['redis_client'].close()
     app_context['mqtt_task'].cancel()
+    app_context['liveness_task'].cancel()
     try:
         await app_context['mqtt_task']
+        await app_context['liveness_task']
     except asyncio.CancelledError:
-        logger.info("MQTT listener task cancelled.")
+        logger.info("Background tasks cancelled successfully.")
 
 # -------------------
 # FASTAPI APP & MODELS
@@ -296,7 +339,7 @@ async def root():
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
             :root {
-                --telegram-bg-color: #ffffff;
+                --telegram-bg-color: #DFDBE5;
                 --telegram-text-color: #000000;
                 --telegram-hint-color: #999999;
                 --telegram-link-color: #2481cc;
@@ -306,7 +349,8 @@ async def root():
             }
             body { 
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-                background-color: var(--telegram-bg-color); 
+                background-color: #DFDBE5;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%230a947c' fill-opacity='0.4' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
                 color: var(--telegram-text-color); 
                 margin: 0; 
                 padding: 1rem; 
@@ -315,12 +359,11 @@ async def root():
                 align-items: center; 
                 min-height: 100vh; 
                 box-sizing: border-box;
-                background-image: url("data:image/svg+xml,%3csvg width='84' height='48' viewBox='0 0 84 48' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M22 24h-22v-24h22v24zM62 0h-20v48h20v-48zM84 24h-20v-24h20v24z' fill='%23000000' fill-opacity='0.05' fill-rule='evenodd'/%3e%3c/svg%3e");
             }
             .status-card { width: 100%; max-width: 400px; border-radius: 1rem; padding: 2rem; text-align: center; transition: all 0.3s ease; margin-bottom: 1rem; }
-            .status-card.clear { background-color: #e0f8e9; box-shadow: 0 4px 20px rgba(45, 212, 111, 0.2); }
-            .status-card.detected { background-color: #ffebee; box-shadow: 0 4px 20px rgba(239, 83, 80, 0.2); }
-            .status-card.unknown { background-color: #f3f4f6; box-shadow: 0 4px 20px rgba(156, 163, 175, 0.2); }
+            .status-card.clear { background-color: rgba(224, 248, 233, 0.9); box-shadow: 0 4px 20px rgba(45, 212, 111, 0.2); }
+            .status-card.detected { background-color: rgba(255, 235, 238, 0.9); box-shadow: 0 4px 20px rgba(239, 83, 80, 0.2); }
+            .status-card.unknown { background-color: rgba(243, 244, 246, 0.9); box-shadow: 0 4px 20px rgba(156, 163, 175, 0.2); }
             .status-icon { width: 64px; height: 64px; margin: 0 auto 1rem; }
             .status-text { font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
             .status-text.clear { color: #22c55e; }
@@ -415,7 +458,7 @@ async def root():
                     }
                 } else {
                     statusText.textContent = 'Sconosciuto';
-                    statusDescription.textContent = 'Non riesco a determinare lo stato del bagno.';
+                    statusDescription.textContent = 'Lo stato del sensore non è noto o il dispositivo è offline.';
                 }
             }
 
@@ -471,7 +514,7 @@ async def root():
                     tg.ready();
                     tg.expand();
                     
-                    document.documentElement.style.setProperty('--telegram-bg-color', tg.themeParams.bg_color || '#ffffff');
+                    document.documentElement.style.setProperty('--telegram-bg-color', '#DFDBE5');
                     document.documentElement.style.setProperty('--telegram-text-color', tg.themeParams.text_color || '#000000');
                     document.documentElement.style.setProperty('--telegram-hint-color', tg.themeParams.hint_color || '#999999');
                     document.documentElement.style.setProperty('--telegram-link-color', tg.themeParams.link_color || '#2481cc');
