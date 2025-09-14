@@ -196,7 +196,7 @@ async def lifespan(app: FastAPI):
 
     app_context['redis_client'] = redis_client
     
-    await redis_client.setnx(redis_key_state("device1"), "unknown")
+    await redis_client.setnx(redis_key_state("Sensore_Bagno-01"), "unknown")
     
     bot_app = Application.builder().token(BOT_TOKEN).updater(None).build()
     app_context['bot_app'] = bot_app
@@ -256,7 +256,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def checkavailability_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    device_id = "device1"
+    device_id = "Sensore_Bagno-01"
     redis_client = app_context['redis_client']
     current_state = await redis_client.get(redis_key_state(device_id)) or "unknown"
 
@@ -270,7 +270,7 @@ async def checkavailability_command(update: Update, context: ContextTypes.DEFAUL
     
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    device_id = "device1" 
+    device_id = "Sensore_Bagno-01" 
     redis_client = app_context['redis_client']
     removed_count = await redis_client.srem(redis_key_subscribers(device_id), str(chat_id))
     if removed_count > 0:
@@ -408,7 +408,7 @@ async def root():
                 return true;
             };
 
-            const deviceId = "device1";
+            const deviceId = "Sensore_Bagno-01";
 
             // DOM Elements
             const appView = document.getElementById('app-view');
@@ -446,7 +446,7 @@ async def root():
 
                 if (state === 'clear') {
                     statusText.textContent = 'Libero';
-                    statusDescription.textContent = 'Il bagno è disponibile. Corri!';
+                    statusDescription.textContent = `Il bagno '${deviceId}' è disponibile. Corri!`;
                 } else if (state === 'detected') {
                     statusText.textContent = 'Occupato';
                     if (isSubscribed) {
