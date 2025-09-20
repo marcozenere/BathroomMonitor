@@ -1,8 +1,8 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-const char* ssid = "Zenet";
-const char* password = "20a06a1987";
+const char* ssid = "############";  // Replace with your network SSID
+const char* password = "############";  // Replace with your network password
 const char* mqtt_broker = "broker.hivemq.com";
 const int mqtt_port = 1883;
 const char* device_id = "Sensore_Bagno-01";
