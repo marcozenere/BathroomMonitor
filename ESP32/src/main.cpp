@@ -1,8 +1,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <WiFiManager.h>
 
-const char* ssid = "############";  // Replace with your network SSID
-const char* password = "############";  // Replace with your network password
 const char* mqtt_broker = "broker.hivemq.com";
 const int mqtt_port = 1883;
 const char* device_id = "Sensore_Bagno-01";
@@ -28,14 +27,16 @@ void setup() {
   delay(10);
   snprintf(mqtt_topic, sizeof(mqtt_topic), "esp32/%s/sensor", device_id);
 
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  WiFiManager wifiManager;
+  //wifiManager.resetSettings(); 
+
+  if (!wifiManager.autoConnect("BathroomBoardAP")) {
+    Serial.println("Failed to connect and hit timeout");
+    delay(3000);
+    ESP.restart(); // Restart the ESP if it fails to connect
+    delay(5000);
   }
+
   Serial.println("\nWiFi connected!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
